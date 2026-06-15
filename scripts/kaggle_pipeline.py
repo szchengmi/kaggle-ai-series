@@ -229,24 +229,15 @@ def step1_generate_script():
 "emotion": "情绪", "subtitle": "字幕"}}]}}],
 "characters_used": ["xiaoming", "xiaoli"], "next_episode_hook": "下集预告"}}"""
 
-    # 兼容新旧版 google-genai API
-    try:
-        # 新版 API (>=1.0)
-        from google.genai import types
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[prompt],
-            config=types.GenerationConfig(
-                temperature=0.9, top_p=0.95, top_k=40, max_output_tokens=8192,
-            )
-        )
-    except (ImportError, AttributeError):
-        # 旧版 API — 不用 types.GenerationConfig，直接传参数
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[prompt],
+    # 使用新版 google-genai API（旧版会在启动时被升级）
+    from google.genai import types
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[prompt],
+        config=types.GenerationConfig(
             temperature=0.9, top_p=0.95, top_k=40, max_output_tokens=8192,
         )
+    )
 
     text = response.text.strip()
     if text.startswith("```"):
@@ -736,8 +727,12 @@ def main():
     t0 = time.time()
     setup_dirs()
 
-    # 依赖
-    _install_if_missing("google.genai", "google-genai")
+    # 依赖 — Kaggle的google-genai通常版本很旧，强制升级到最新
+    log("检查 google-genai 版本...")
+    r = run_cmd("pip install -q --upgrade google-genai pydantic", timeout=120)
+    if r.returncode != 0:
+        log("升级失败，尝试强制重装...")
+        run_cmd("pip install -q --force-reinstall google-genai pydantic", timeout=120)
     _install_if_missing("diffusers", "diffusers transformers accelerate safetensors")
     _install_if_missing("ChatTTS", "ChatTTS soundfile edge-tts moviepy")
 
