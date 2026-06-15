@@ -9,30 +9,22 @@
 5. **配音生成** - ChatTTS / edge-tts
 6. **剪辑合成** - FFmpeg
 
-## 快速开始
+## Kaggle Notebook 使用（3步）
 
-### Kaggle Notebook 使用
+### 1. 创建Notebook
+- 访问 https://kaggle.com/notebooks → New Notebook
+- 开启 **GPU (T4)** 和 **高RAM**
 
-1. 在 [Kaggle](https://kaggle.com/notebooks) 新建 Notebook
-2. 开启 **GPU (T4)** 和 **高RAM**
-3. 在 **Add-ons → Secrets** 中添加：
-   - `GOOGLE_API_KEY` - 从 [Google AI Studio](https://aistudio.google.com/apikey) 获取
-   - `HF_TOKEN` - 从 [HuggingFace](https://huggingface.co/settings/tokens) 获取（可选）
-4. 在第一个 Cell 中克隆仓库：
+### 2. 设置Secrets
+在 Notebook 左侧 **Add-ons → Secrets** 中添加：
+- `GOOGLE_API_KEY` — 从 [Google AI Studio](https://aistudio.google.com/apikey) 获取
+- `HF_TOKEN` — 从 [HuggingFace](https://huggingface.co/settings/tokens) 获取（可选，用于下载模型）
 
+### 3. 第一个Cell克隆并运行
 ```python
-!git clone https://github.com/YOUR_USERNAME/kaggle-ai-series.git
+!git clone https://github.com/szchengmi/kaggle-ai-series.git
 %cd kaggle-ai-series/scripts
-```
-
-5. 直接运行 `kaggle_pipeline.py` 即可
-
-### 本地测试
-
-```bash
-pip install -r requirements.txt
-export GOOGLE_API_KEY="your-key"
-python scripts/kaggle_pipeline.py
+!python kaggle_pipeline.py
 ```
 
 ## 项目结构
@@ -45,22 +37,20 @@ python scripts/kaggle_pipeline.py
 ├── step4_generate_videos.py    # Step 4: 视频生成 (AnimateDiff-Lightning)
 ├── step5_generate_audio.py     # Step 5: 配音生成 (ChatTTS)
 ├── step6_compose.py            # Step 6: 剪辑合成 (FFmpeg)
-├── config/
-│   └── config.env              # 参数配置
-├── requirements.txt            # Python依赖
-└── .gitignore
+├── config/config.env           # 参数配置
+└── requirements.txt            # Python依赖
 ```
 
 ## 参数修改
 
-在 `kaggle_pipeline.py` 开头的 **配置区** 或 `config/config.env` 中修改：
+在 `kaggle_pipeline.py` 开头的 **配置区** 修改：
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `EPISODE_NUM` | 1 | 第几集 |
 | `GENRE` | urban_romance | 题材 |
 | `QUALITY_MODE` | fast | fast/balanced/quality |
-| `IMAGE_STEPS` | 20 | SD推理步数 |
+| `IMAGE_STEPS` | 15 | SD推理步数 |
 | `VIDEO_RESOLUTION` | 512 | 视频分辨率 |
 
 ## 各步骤耗时（T4 GPU）
