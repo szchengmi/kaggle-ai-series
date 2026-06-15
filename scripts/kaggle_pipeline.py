@@ -53,6 +53,18 @@ def get_kaggle_secret(key_name):
 GOOGLE_API_KEY = get_kaggle_secret("GOOGLE_API_KEY")
 HF_TOKEN = get_kaggle_secret("HF_TOKEN")
 
+# Kaggle Secrets 特殊处理：Kaggle会把Secrets赋值给 secret_value_0, secret_value_1 等变量
+if not GOOGLE_API_KEY:
+    try:
+        GOOGLE_API_KEY = secret_value_0  # noqa: F821
+    except NameError:
+        pass
+if not HF_TOKEN:
+    try:
+        HF_TOKEN = secret_value_1  # noqa: F821
+    except NameError:
+        pass
+
 EPISODE_NUM = int(os.environ.get("EPISODE_NUM", "1"))
 GENRE = os.environ.get("GENRE", "urban_romance")
 NUM_SCENES = int(os.environ.get("NUM_SCENES", "6"))
