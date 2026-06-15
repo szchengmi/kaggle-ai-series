@@ -8,6 +8,8 @@ Kaggle AI短剧自动生成 - 端到端流水线
   4. 视频生成 (AnimateDiff-Lightning)
   5. 配音生成 (ChatTTS / edge-tts)
   6. 剪辑合成 (FFmpeg)
+
+兼容Kaggle预装的 google-genai 旧版本库。
 """
 
 import os
@@ -20,12 +22,11 @@ import torch
 
 # ============================================================
 # Kaggle Secrets 读取
-# Kaggle通过 kaggle_secrets 库提供Secrets
 # ============================================================
 
 def get_kaggle_secret(key_name):
-    """从Kaggle Secrets读取密钥"""
-    # 方式1: kaggle_secrets 库（Kaggle官方方式）
+    """从Kaggle Secrets读取密钥（兼容kaggle_secrets库和环境变量）"""
+    # 方式1: kaggle_secrets 库
     try:
         from kaggle_secrets import UserSecretsClient
         client = UserSecretsClient()
@@ -41,19 +42,6 @@ def get_kaggle_secret(key_name):
     val = os.environ.get(key_name, "")
     if val:
         return val
-
-    # 方式3: /kaggle/input/ 目录文件
-    kaggle_input = f"/kaggle/input/{key_name.lower()}"
-    if os.path.exists(kaggle_input):
-        if os.path.isfile(kaggle_input):
-            with open(kaggle_input, "r") as f:
-                return f.read().strip()
-        files = os.listdir(kaggle_input)
-        if files:
-            fpath = os.path.join(kaggle_input, files[0])
-            if os.path.isfile(fpath):
-                with open(fpath, "r") as f:
-                    return f.read().strip()
 
     return ""
 
@@ -197,6 +185,7 @@ EMOTION_SPEED = {
 
 # ============================================================
 # Step 1: 剧本生成 (Gemini API)
+# 兼容 google-genai 新旧版本
 # ============================================================
 
 def step1_generate_script():
@@ -205,7 +194,6 @@ def step1_generate_script():
     log("=" * 50)
 
     from google import genai
-    from google.genai import types
 
     client = genai.Client(api_key=GOOGLE_API_KEY)
 
@@ -241,13 +229,24 @@ def step1_generate_script():
 "emotion": "情绪", "subtitle": "字幕"}}]}}],
 "characters_used": ["xiaoming", "xiaoli"], "next_episode_hook": "下集预告"}}"""
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[prompt],
-        config=types.GenerationConfig(
+    # 兼容新旧版 google-genai API
+    try:
+        # 新版 API (>=1.0)
+        from google.genai import types
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt],
+            config=types.GenerationConfig(
+                temperature=0.9, top_p=0.95, top_k=40, max_output_tokens=8192,
+            )
+        )
+    except (ImportError, AttributeError):
+        # 旧版 API — 不用 types.GenerationConfig，直接传参数
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt],
             temperature=0.9, top_p=0.95, top_k=40, max_output_tokens=8192,
         )
-    )
 
     text = response.text.strip()
     if text.startswith("```"):
