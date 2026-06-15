@@ -9,46 +9,52 @@
 5. **配音生成** - ChatTTS / edge-tts
 6. **剪辑合成** - FFmpeg
 
-## Kaggle Notebook 使用（3步）
+## Kaggle Notebook 使用（2步）
 
-### 1. 创建Notebook
-- 访问 https://kaggle.com/notebooks → New Notebook
-- 开启 **GPU (T4)** 和 **高RAM**
+### Step 1: 下载模型（首次运行）
 
-### 2. 设置Secrets（可选）
-在 Notebook 左侧 **Add-ons → Secrets** 中可以添加：
-- `GOOGLE_API_KEY` — 从 [Google AI Studio](https://aistudio.google.com/apikey) 获取（可选，不设置则用本地Qwen模型）
-- `HF_TOKEN` — 从 [HuggingFace](https://huggingface.co/settings/tokens) 获取（可选）
+```python
+!git clone https://github.com/szchengmi/kaggle-ai-series.git
+%cd /kaggle/working/kaggle-ai-series/scripts
+!python download_models.py
+```
 
-> 注意：Kaggle的IP可能被Google封，Gemini API可能403。此时会自动降级为本地Qwen2.5-3B模型生成。
+下载完成后，在Kaggle Output目录 **Save as Dataset**（名称：`kaggle-ai-series-models`）。
 
-### 3. 第一个Cell克隆并运行
+### Step 2: 运行流水线
+
 ```python
 !git clone https://github.com/szchengmi/kaggle-ai-series.git
 %cd /kaggle/working/kaggle-ai-series/scripts
 !python kaggle_pipeline.py
 ```
 
+如果已保存Dataset，在Notebook中 **Add Data → kaggle-ai-series-models** 挂载，模型会自动加载，无需重复下载。
+
+## 设置Kaggle Secrets（可选）
+
+在 Notebook 左侧 **Add-ons → Secrets** 中可以添加：
+- `GOOGLE_API_KEY` — 从 [Google AI Studio](https://aistudio.google.com/apikey) 获取（可选，不设置则用本地Qwen模型）
+- `HF_TOKEN` — 从 [HuggingFace](https://huggingface.co/settings/tokens) 获取（可选）
+
 ## 项目结构
 
 ```
 scripts/
-├── kaggle_pipeline.py          # 🔥 端到端主流程（Kaggle直接跑这个）
+├── download_models.py          # 🔽 模型下载脚本（首次运行）
+├── kaggle_pipeline.py          # 🔥 端到端主流程
 ├── config/config.env           # 参数配置
 └── requirements.txt            # Python依赖
 ```
 
-## 参数修改
+## 模型列表（download_models.py）
 
-在 `kaggle_pipeline.py` 开头的 **配置区** 修改：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `EPISODE_NUM` | 1 | 第几集 |
-| `GENRE` | urban_romance | 题材 |
-| `QUALITY_MODE` | fast | fast/balanced/quality |
-| `IMAGE_STEPS` | 15 | SD推理步数 |
-| `VIDEO_RESOLUTION` | 512 | 视频分辨率 |
+| 模型 | 用途 | 大小 |
+|------|------|------|
+| runwayml/stable-diffusion-v1-5 | SD 1.5 画面生成 | ~2.43GB |
+| stabilityai/sd-vae-ft-mse | VAE改进版 | ~334MB |
+| guoyww/animatediff-motion-adapter-v1-5-2 | AnimateDiff视频 | ~301MB |
+| Qwen/Qwen2.5-3B-Instruct | 本地LLM备用 | ~6.44GB |
 
 ## 各步骤耗时（T4 GPU）
 
@@ -60,9 +66,3 @@ scripts/
 | 视频 | AnimateDiff-Lightning | ~20-40分钟 |
 | 配音 | ChatTTS | ~5-10分钟 |
 | 剪辑 | FFmpeg | ~1-2分钟 |
-
-## 剧本生成三级降级
-
-1. **Gemini API** — 质量最高，需要API Key且Kaggle IP未被封
-2. **本地Qwen2.5-3B** — 无需API Key，Kaggle T4可跑，质量中等
-3. **预置剧本** — 兜底方案，保证流程能跑通
