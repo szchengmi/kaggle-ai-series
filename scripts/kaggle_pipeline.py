@@ -93,6 +93,13 @@ if HF_TOKEN:
 # ============================================================
 
 BASE_DIR = "/kaggle/working/ai-series"
+# 模型缓存目录 — 指向 /kaggle/working/output 以便保存到Kaggle Dataset
+MODEL_CACHE_DIR = "/kaggle/working/output/models"
+
+# HuggingFace模型缓存到output目录（持久化到Kaggle Dataset）
+os.environ["HF_HOME"] = MODEL_CACHE_DIR
+os.environ["HUGGINGFACE_HUB_CACHE"] = MODEL_CACHE_DIR
+os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
 
 def get_dirs(episode_num=EPISODE_NUM):
     ep_dir = f"{BASE_DIR}/episode_{episode_num:02d}"
@@ -103,8 +110,9 @@ def get_dirs(episode_num=EPISODE_NUM):
         "videos": f"{ep_dir}/videos",
         "audio": f"{ep_dir}/audio",
         "final": f"{ep_dir}/final",
-        "models": f"{BASE_DIR}/models",
+        "models": MODEL_CACHE_DIR,
         "logs": f"{ep_dir}/logs",
+        "output": "/kaggle/working/output",
     }
 
 def setup_dirs(episode_num=EPISODE_NUM):
@@ -911,10 +919,7 @@ def main():
     log(f"步数: {IMAGE_STEPS} | 分辨率: {VIDEO_RESOLUTION} | FPS: {VIDEO_FPS}")
 
     if not GOOGLE_API_KEY:
-        log("[ERROR] GOOGLE_API_KEY 未设置！")
-        log("在Kaggle Notebook左侧 → Add-ons → Secrets → 添加 GOOGLE_API_KEY")
-        log("获取Key: https://aistudio.google.com/apikey")
-        return
+        log("[WARN] GOOGLE_API_KEY 未设置，将使用本地Qwen模型生成剧本")
 
     t0 = time.time()
     setup_dirs()
@@ -940,7 +945,19 @@ def main():
     elapsed = (time.time() - t0) / 60
     log(f"\n{'=' * 50}")
     log(f"全部完成! 耗时: {elapsed:.1f} 分钟")
-    log(f"输出: {get_dirs()['final']}/episode_{EPISODE_NUM:02d}_final.mp4")
+
+    # 复制最终视频和SRT到output目录（持久化）
+    final_video = f"{get_dirs()['final']}/episode_{EPISODE_NUM:02d}_final.mp4"
+    final_srt = f"{get_dirs()['final']}/ep{EPISODE_NUM:02d}.srt"
+    output_dir = get_dirs()['output']
+    if os.path.exists(final_video):
+        shutil.copy2(final_video, f"{output_dir}/episode_{EPISODE_NUM:02d}_final.mp4")
+        log(f"视频已复制到: {output_dir}/episode_{EPISODE_NUM:02d}_final.mp4")
+    if os.path.exists(final_srt):
+        shutil.copy2(final_srt, f"{output_dir}/ep{EPISODE_NUM:02d}.srt")
+
+    log(f"模型缓存: {MODEL_CACHE_DIR}")
+    log(f"输出目录: {output_dir}")
     log(f"{'=' * 50}")
 
 
