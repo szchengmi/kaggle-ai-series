@@ -8,13 +8,6 @@ Kaggle AI短剧自动生成 - 端到端流水线
   4. 视频生成 (AnimateDiff-Lightning)
   5. 配音生成 (ChatTTS / edge-tts)
   6. 剪辑合成 (FFmpeg)
-
-使用方法：
-  1. 在Kaggle Notebook第一个Cell中粘贴本代码
-  2. 在Kaggle Secrets中添加 GOOGLE_API_KEY（和可选的 HF_TOKEN）
-  3. 运行即可
-
-注意：需要Kaggle GPU (T4) 才能跑Step3/4。无GPU时自动降级为占位图/视频。
 """
 
 import os
@@ -27,37 +20,40 @@ import torch
 
 # ============================================================
 # Kaggle Secrets 读取
-# Kaggle把Secrets挂载到 /kaggle/input/ 或通过环境变量注入
-# 多重方式尝试，确保能读到
+# Kaggle通过 kaggle_secrets 库提供Secrets
 # ============================================================
 
 def get_kaggle_secret(key_name):
-    """从Kaggle Secrets读取密钥，多种方式尝试"""
-    # 方式1: 环境变量（Kaggle自动注入）
+    """从Kaggle Secrets读取密钥"""
+    # 方式1: kaggle_secrets 库（Kaggle官方方式）
+    try:
+        from kaggle_secrets import UserSecretsClient
+        client = UserSecretsClient()
+        val = client.get_secret(key_name)
+        if val:
+            return val
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # 方式2: 环境变量
     val = os.environ.get(key_name, "")
     if val:
         return val
 
-    # 方式2: /kaggle/input/ 目录（Kaggle Dataset挂载）
+    # 方式3: /kaggle/input/ 目录文件
     kaggle_input = f"/kaggle/input/{key_name.lower()}"
     if os.path.exists(kaggle_input):
-        # 可能是文件或目录
         if os.path.isfile(kaggle_input):
             with open(kaggle_input, "r") as f:
                 return f.read().strip()
-        # 目录下找第一个文件
         files = os.listdir(kaggle_input)
         if files:
             fpath = os.path.join(kaggle_input, files[0])
             if os.path.isfile(fpath):
                 with open(fpath, "r") as f:
                     return f.read().strip()
-
-    # 方式3: Kaggle secret文件（旧版Kaggle）
-    secret_path = f"/kaggle/secrets/{key_name}"
-    if os.path.exists(secret_path):
-        with open(secret_path, "r") as f:
-            return f.read().strip()
 
     return ""
 
@@ -88,13 +84,12 @@ VIDEO_FPS = int(os.environ.get("VIDEO_FPS", str(PRESET["fps"])))
 VIDEO_RESOLUTION = int(os.environ.get("VIDEO_RESOLUTION", str(PRESET["resolution"])))
 AUDIO_SAMPLE_RATE = 24000
 
-# HuggingFace token
 if HF_TOKEN:
     os.environ["HF_HUB_TOKEN"] = HF_TOKEN
     os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
 
 # ============================================================
-# 目录结构
+# 目录
 # ============================================================
 
 BASE_DIR = "/kaggle/working/ai-series"
@@ -102,8 +97,7 @@ BASE_DIR = "/kaggle/working/ai-series"
 def get_dirs(episode_num=EPISODE_NUM):
     ep_dir = f"{BASE_DIR}/episode_{episode_num:02d}"
     return {
-        "base": BASE_DIR,
-        "episode": ep_dir,
+        "base": BASE_DIR, "episode": ep_dir,
         "storyboard": f"{ep_dir}/storyboards",
         "images": f"{ep_dir}/images",
         "videos": f"{ep_dir}/videos",
@@ -119,17 +113,12 @@ def setup_dirs(episode_num=EPISODE_NUM):
         os.makedirs(path, exist_ok=True)
     return dirs
 
-# ============================================================
-# 工具函数
-# ============================================================
-
 def log(msg):
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
 def run_cmd(cmd, timeout=600):
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-    return result
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
 
 def save_json(data, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -178,14 +167,10 @@ SCENE_PROMPTS = {
 }
 
 EMOTION_ENHANCE = {
-    "happy": "smiling, bright expression",
-    "sad": "sad expression, teary eyes",
-    "angry": "angry expression, furrowed brows",
-    "surprised": "surprised expression, wide eyes",
-    "nervous": "nervous expression, sweating",
-    "calm": "calm expression, relaxed",
-    "determined": "determined expression, confident",
-    "embarrassed": "embarrassed expression, blushing",
+    "happy": "smiling, bright expression", "sad": "sad expression, teary eyes",
+    "angry": "angry expression, furrowed brows", "surprised": "surprised expression, wide eyes",
+    "nervous": "nervous expression, sweating", "calm": "calm expression, relaxed",
+    "determined": "determined expression, confident", "embarrassed": "embarrassed expression, blushing",
     "thoughtful": "thoughtful expression, contemplative"
 }
 
@@ -219,7 +204,6 @@ def step1_generate_script():
     log("Step 1: 剧本生成 (Gemini API)")
     log("=" * 50)
 
-    # 使用新版 google-genai 库（非 deprecated google.generativeai）
     from google import genai
     from google.genai import types
 
@@ -261,10 +245,7 @@ def step1_generate_script():
         model="gemini-2.0-flash",
         contents=[prompt],
         config=types.GenerationConfig(
-            temperature=0.9,
-            top_p=0.95,
-            top_k=40,
-            max_output_tokens=8192,
+            temperature=0.9, top_p=0.95, top_k=40, max_output_tokens=8192,
         )
     )
 
@@ -276,8 +257,7 @@ def step1_generate_script():
     script_data = json.loads(text)
 
     dirs = get_dirs()
-    output_path = f"{dirs['storyboard']}/episode_{EPISODE_NUM:02d}_script.json"
-    save_json(script_data, output_path)
+    save_json(script_data, f"{dirs['storyboard']}/episode_{EPISODE_NUM:02d}_script.json")
 
     log(f"剧本: {script_data.get('title')}")
     total_shots = sum(len(s.get("shots", [])) for s in script_data.get("scenes", []))
@@ -294,68 +274,48 @@ def step2_generate_storyboard(script_data):
     log("Step 2: 分镜生成")
     log("=" * 50)
 
-    storyboard = {
-        "episode": script_data.get("episode", 1),
-        "title": script_data.get("title", ""),
-        "characters": {},
-        "scenes": []
-    }
+    storyboard = {"episode": script_data.get("episode", 1), "title": script_data.get("title", ""), "characters": {}, "scenes": []}
     characters_used = set()
 
     for scene in script_data.get("scenes", []):
         scene_data = {
-            "scene_id": scene["scene_id"],
-            "location": scene["location"],
-            "time_of_day": scene["time_of_day"],
-            "lighting": scene["lighting"],
-            "mood": scene["mood"],
-            "shots": []
+            "scene_id": scene["scene_id"], "location": scene["location"],
+            "time_of_day": scene["time_of_day"], "lighting": scene["lighting"], "mood": scene["mood"], "shots": []
         }
         for shot in scene.get("shots", []):
             char = shot.get("character", "none")
             shot_type = shot.get("shot_type", "medium_shot")
             emotion = shot.get("emotion", "calm")
-            if char != "none":
-                characters_used.add(char)
+            if char != "none": characters_used.add(char)
             params = SHOT_PARAMS.get(shot_type, SHOT_PARAMS["medium_shot"])
 
             pp = [params["prefix"]]
             if char != "none" and char in CHARACTER_PROMPTS:
                 pp.append(CHARACTER_PROMPTS[char]["base_prompt"])
             pp.append(shot.get("action", ""))
-            if emotion in EMOTION_ENHANCE:
-                pp.append(EMOTION_ENHANCE[emotion])
+            if emotion in EMOTION_ENHANCE: pp.append(EMOTION_ENHANCE[emotion])
             sp = SCENE_PROMPTS.get(scene["location"], "")
-            if sp:
-                pp.append(sp)
+            if sp: pp.append(sp)
             pp.append(f"{scene['time_of_day']}, {scene['lighting']}")
             pp.append(shot.get("description", ""))
             pp.append("masterpiece, best quality, detailed, anime style")
-            full_prompt = ", ".join([p for p in pp if p])
 
             neg = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, cropped, worst quality, low quality, jpeg artifacts, blurry"
             if char != "none" and char in CHARACTER_PROMPTS:
                 neg += ", " + CHARACTER_PROMPTS[char]["negative_prompt"]
 
             scene_data["shots"].append({
-                "shot_id": shot["shot_id"],
-                "shot_type": shot_type,
+                "shot_id": shot["shot_id"], "shot_type": shot_type,
                 "camera_movement": shot.get("camera_movement", "static"),
                 "duration_seconds": shot.get("duration_seconds", 3),
-                "width": params["w"],
-                "height": params["h"],
-                "prompt": full_prompt,
+                "width": params["w"], "height": params["h"],
+                "prompt": ", ".join([p for p in pp if p]),
                 "negative_prompt": neg,
                 "seed": CHARACTER_PROMPTS.get(char, {}).get("seed", -1),
-                "character": char,
-                "dialogue": shot.get("dialogue", ""),
-                "narration": shot.get("narration", ""),
-                "subtitle": shot.get("subtitle", ""),
-                "description": shot.get("description", ""),
-                "action": shot.get("action", ""),
-                "emotion": emotion,
-                "steps": IMAGE_STEPS,
-                "guidance": IMAGE_GUIDANCE
+                "character": char, "dialogue": shot.get("dialogue", ""),
+                "narration": shot.get("narration", ""), "subtitle": shot.get("subtitle", ""),
+                "description": shot.get("description", ""), "action": shot.get("action", ""),
+                "emotion": emotion, "steps": IMAGE_STEPS, "guidance": IMAGE_GUIDANCE
             })
         storyboard["scenes"].append(scene_data)
 
@@ -363,9 +323,7 @@ def step2_generate_storyboard(script_data):
         storyboard["characters"][cid] = CHARACTER_PROMPTS[cid]
 
     dirs = get_dirs()
-    output_path = f"{dirs['storyboard']}/episode_{EPISODE_NUM:02d}_storyboard.json"
-    save_json(storyboard, output_path)
-
+    save_json(storyboard, f"{dirs['storyboard']}/episode_{EPISODE_NUM:02d}_storyboard.json")
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
     log(f"分镜完成: {len(storyboard['scenes'])}场景 | {total}镜头")
     return storyboard
@@ -385,53 +343,44 @@ def step3_generate_images(storyboard):
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
 
     if not has_gpu:
-        log("[WARN] 无GPU，生成占位图")
+        log("[WARN] 无GPU，占位图")
         _placeholder_images(storyboard)
         return
 
     from diffusers import StableDiffusionPipeline, EulerAncestralDiscreteScheduler
 
-    model_path = f"{dirs['models']}/stable-diffusion-v1-5"
-    if not os.path.exists(model_path) or len(os.listdir(model_path)) == 0:
-        model_path = "runwayml/stable-diffusion-v1-5"
+    mp = f"{dirs['models']}/stable-diffusion-v1-5"
+    if not os.path.exists(mp) or not os.listdir(mp):
+        mp = "runwayml/stable-diffusion-v1-5"
 
-    log(f"加载SD: {model_path}")
-    pipe = StableDiffusionPipeline.from_pretrained(
-        model_path, torch_dtype=torch.float16,
-        safety_checker=None, requires_safety_checker=False
-    )
+    log(f"加载SD: {mp}")
+    pipe = StableDiffusionPipeline.from_pretrained(mp, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False)
 
     try:
         from diffusers import AutoencoderKL
-        vae_path = f"{dirs['models']}/vae-ft-mse"
-        if not os.path.exists(vae_path):
-            vae_path = "stabilityai/sd-vae-ft-mse"
-        pipe.vae = AutoencoderKL.from_pretrained(vae_path, torch_dtype=torch.float16)
+        vp = f"{dirs['models']}/vae-ft-mse"
+        if not os.path.exists(vp): vp = "stabilityai/sd-vae-ft-mse"
+        pipe.vae = AutoencoderKL.from_pretrained(vp, torch_dtype=torch.float16)
     except Exception as e:
         log(f"VAE: {e}")
 
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
-    pipe.enable_attention_slicing()
-    pipe.enable_vae_slicing()
-    pipe = pipe.to("cuda")
+    pipe.enable_attention_slicing().enable_vae_slicing().to("cuda")
     try:
         pipe.enable_xformers_memory_efficient_attention()
         log("xformers ✓")
     except:
         pass
 
-    log(f"生成 {total} 张图片...")
+    log(f"生成 {total} 张...")
     count = 0
-
     for scene in storyboard.get("scenes", []):
         for shot in scene.get("shots", []):
             count += 1
             sid = shot["shot_id"]
             ep = storyboard.get("episode", 1)
             out = f"{dirs['images']}/ep{ep:02d}_{scene['scene_id']}_{sid}.png"
-
-            if os.path.exists(out):
-                continue
+            if os.path.exists(out): continue
 
             w = max((shot["width"] // 8) * 8, 512)
             h = max((shot["height"] // 8) * 8, 512)
@@ -440,13 +389,10 @@ def step3_generate_images(storyboard):
                 gen = torch.Generator("cuda").manual_seed(shot["seed"])
 
             try:
-                result = pipe(
-                    prompt=shot["prompt"], negative_prompt=shot.get("negative_prompt", ""),
-                    width=w, height=h,
-                    num_inference_steps=shot.get("steps", IMAGE_STEPS),
-                    guidance_scale=shot.get("guidance", IMAGE_GUIDANCE),
-                    generator=gen
-                )
+                result = pipe(prompt=shot["prompt"], negative_prompt=shot.get("negative_prompt", ""),
+                             width=w, height=h,
+                             num_inference_steps=shot.get("steps", IMAGE_STEPS),
+                             guidance_scale=shot.get("guidance", IMAGE_GUIDANCE), generator=gen)
                 result.images[0].save(out)
                 log(f"  [{count}/{total}] {sid} ({w}x{h}) ✓")
             except torch.cuda.OutOfMemoryError:
@@ -454,8 +400,7 @@ def step3_generate_images(storyboard):
                 _save_placeholder_image(shot, out)
                 log(f"  [{count}/{total}] {sid} OOM ✗")
 
-            if count % 5 == 0:
-                torch.cuda.empty_cache()
+            if count % 5 == 0: torch.cuda.empty_cache()
 
     log("画面生成完成")
 
@@ -479,10 +424,7 @@ def _save_placeholder_image(shot, output_path):
     draw.rectangle([10, 10, w-10, h-10], outline=(100, 100, 200), width=2)
     draw.text((30, 40), f"[PLACEHOLDER] {shot.get('shot_id', '')}", fill=(200, 200, 255))
     draw.text((30, 80), f"Char: {shot.get('character', '')}", fill=(200, 255, 200))
-    desc = shot.get("description", "")[:50]
-    draw.text((30, 120), f"Desc: {desc}", fill=(255, 255, 200))
-    if shot.get("dialogue"):
-        draw.text((30, 160), f"Dial: {shot['dialogue'][:30]}", fill=(255, 200, 200))
+    draw.text((30, 120), f"Desc: {shot.get('description', '')[:50]}", fill=(255, 255, 200))
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     img.save(output_path)
 
@@ -501,96 +443,64 @@ def step4_generate_videos(storyboard):
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
 
     if not has_gpu:
-        log("[WARN] 无GPU，生成占位视频")
+        log("[WARN] 无GPU，占位视频")
         _placeholder_videos(storyboard)
         return
 
     from diffusers import StableDiffusionPipeline, MotionAdapter, EulerAncestralDiscreteScheduler
 
     mp = f"{dirs['models']}/stable-diffusion-v1-5"
-    if not os.path.exists(mp) or not os.listdir(mp):
-        mp = "runwayml/stable-diffusion-v1-5"
-
+    if not os.path.exists(mp) or not os.listdir(mp): mp = "runwayml/stable-diffusion-v1-5"
     motp = f"{dirs['models']}/animatediff"
-    if not os.path.exists(motp) or not os.listdir(motp):
-        motp = "guoyww/animatediff-motion-adapter-v1-5-2"
+    if not os.path.exists(motp) or not os.listdir(motp): motp = "guoyww/animatediff-motion-adapter-v1-5-2"
 
     log("加载AnimateDiff...")
     adapter = MotionAdapter.from_pretrained(motp, torch_dtype=torch.float16)
-    pipe = StableDiffusionPipeline.from_pretrained(
-        mp, motion_adapter=adapter, torch_dtype=torch.float16,
-        safety_checker=None, requires_safety_checker=False
-    )
-    pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(
-        pipe.scheduler.config, beta_schedule="linear", steps_offset=1
-    )
-    pipe.enable_attention_slicing()
-    pipe.enable_vae_slicing()
-    pipe = pipe.to("cuda")
-    try:
-        pipe.enable_xformers_memory_efficient_attention()
-    except:
-        pass
+    pipe = StableDiffusionPipeline.from_pretrained(mp, motion_adapter=adapter, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False)
+    pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config, beta_schedule="linear", steps_offset=1)
+    pipe.enable_attention_slicing().enable_vae_slicing().to("cuda")
+    try: pipe.enable_xformers_memory_efficient_attention()
+    except: pass
 
     motion_hints = {
-        "static": "subtle motion, minimal movement",
-        "pan_left": "camera panning left",
-        "pan_right": "camera panning right",
-        "dolly_in": "camera zooming in slowly",
-        "dolly_out": "camera zooming out slowly"
+        "static": "subtle motion, minimal movement", "pan_left": "camera panning left",
+        "pan_right": "camera panning right", "dolly_in": "camera zooming in slowly", "dolly_out": "camera zooming out slowly"
     }
 
     log(f"生成 {total} 个视频...")
     count = 0
-
     for scene in storyboard.get("scenes", []):
         for shot in scene.get("shots", []):
             count += 1
             sid = shot["shot_id"]
             ep = storyboard.get("episode", 1)
             out = f"{dirs['videos']}/ep{ep:02d}_{scene['scene_id']}_{sid}.mp4"
-
-            if os.path.exists(out):
-                continue
+            if os.path.exists(out): continue
 
             dur = shot.get("duration_seconds", 3)
             nf = min(int(dur * VIDEO_FPS), 32)
             cm = shot.get("camera_movement", "static")
             enhanced = f"{shot['prompt']}, {motion_hints.get(cm, 'subtle motion')}, smooth animation"
-
             gen = None
-            if shot.get("seed", -1) > 0:
-                gen = torch.Generator("cuda").manual_seed(shot["seed"])
+            if shot.get("seed", -1) > 0: gen = torch.Generator("cuda").manual_seed(shot["seed"])
 
             try:
-                result = pipe(
-                    prompt=enhanced, negative_prompt=shot.get("negative_prompt", ""),
-                    width=VIDEO_RESOLUTION, height=VIDEO_RESOLUTION,
-                    num_frames=nf, num_inference_steps=15,
-                    guidance_scale=7.5, generator=gen
-                )
+                result = pipe(prompt=enhanced, negative_prompt=shot.get("negative_prompt", ""),
+                             width=VIDEO_RESOLUTION, height=VIDEO_RESOLUTION,
+                             num_frames=nf, num_inference_steps=15, guidance_scale=7.5, generator=gen)
                 frames = result.frames[0] if isinstance(result.frames[0], list) else result.frames
-
                 fd = out + "_frames"
                 os.makedirs(fd, exist_ok=True)
-                for i, f in enumerate(frames):
-                    f.save(f"{fd}/frame_{i:04d}.png")
-
-                run_cmd(
-                    f'ffmpeg -y -framerate {VIDEO_FPS} -i "{fd}/frame_%04d.png" '
-                    f'-c:v libx264 -pix_fmt yuv420p -crf 23 '
-                    f'-movflags +faststart "{out}" 2>/dev/null'
-                )
+                for i, f in enumerate(frames): f.save(f"{fd}/frame_{i:04d}.png")
+                run_cmd(f'ffmpeg -y -framerate {VIDEO_FPS} -i "{fd}/frame_%04d.png" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart "{out}" 2>/dev/null')
                 shutil.rmtree(fd, ignore_errors=True)
                 log(f"  [{count}/{total}] {sid} ({nf}f) ✓")
-
             except torch.cuda.OutOfMemoryError:
                 torch.cuda.empty_cache()
                 _save_placeholder_video(shot, out, nf)
                 log(f"  [{count}/{total}] {sid} OOM ✗")
 
-            if count % 3 == 0:
-                torch.cuda.empty_cache()
+            if count % 3 == 0: torch.cuda.empty_cache()
 
     log("视频生成完成")
 
@@ -602,8 +512,7 @@ def _placeholder_videos(storyboard):
             ep = storyboard.get("episode", 1)
             out = f"{dirs['videos']}/ep{ep:02d}_{scene['scene_id']}_{shot['shot_id']}.mp4"
             if not os.path.exists(out):
-                dur = shot.get("duration_seconds", 3)
-                _save_placeholder_video(shot, out, min(int(dur * VIDEO_FPS), 32))
+                _save_placeholder_video(shot, out, min(int(shot.get("duration_seconds", 3) * VIDEO_FPS), 32))
 
 
 def _save_placeholder_video(shot, output_path, num_frames):
@@ -618,15 +527,10 @@ def _save_placeholder_video(shot, output_path, num_frames):
         draw.text((20, 30 + offset % 20), "[VIDEO]", fill=(200, 200, 255))
         draw.text((20, 70 + offset % 20), shot.get("shot_id", ""), fill=(200, 255, 200))
         frames.append(img)
-
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     gif_path = output_path.replace(".mp4", ".gif")
-    frames[0].save(gif_path, save_all=True, append_images=frames[1:],
-                   duration=int(1000 / VIDEO_FPS), loop=0)
-    run_cmd(
-        f'ffmpeg -y -framerate {VIDEO_FPS} -i "{gif_path}" '
-        f'-c:v libx264 -pix_fmt yuv420p -movflags +faststart "{output_path}" 2>/dev/null'
-    )
+    frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=int(1000 / VIDEO_FPS), loop=0)
+    run_cmd(f'ffmpeg -y -framerate {VIDEO_FPS} -i "{gif_path}" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "{output_path}" 2>/dev/null')
 
 
 # ============================================================
@@ -641,7 +545,6 @@ def step5_generate_audio(storyboard):
     dirs = get_dirs()
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
 
-    # ChatTTS
     chat = None
     try:
         import ChatTTS
@@ -651,20 +554,13 @@ def step5_generate_audio(storyboard):
     except Exception as e:
         log(f"ChatTTS: {e}")
 
-    # edge-tts 备用
     edge_ok = False
     try:
         import edge_tts
         edge_ok = True
-    except:
-        pass
+    except: pass
 
-    EDGE_V = {
-        "xiaoming": "zh-CN-YunxiNeural",
-        "xiaoli": "zh-CN-XiaoxiaoNeural",
-        "boss_wang": "zh-CN-YunjianNeural",
-        "narrator": "zh-CN-YunxiNeural"
-    }
+    EDGE_V = {"xiaoming": "zh-CN-YunxiNeural", "xiaoli": "zh-CN-XiaoxiaoNeural", "boss_wang": "zh-CN-YunjianNeural", "narrator": "zh-CN-YunxiNeural"}
 
     count = 0
     for scene in storyboard.get("scenes", []):
@@ -673,9 +569,7 @@ def step5_generate_audio(storyboard):
             sid = shot["shot_id"]
             ep = storyboard.get("episode", 1)
             out = f"{dirs['audio']}/ep{ep:02d}_{scene['scene_id']}_{sid}.wav"
-
-            if os.path.exists(out):
-                continue
+            if os.path.exists(out): continue
 
             char = shot.get("character", "narrator")
             text = shot.get("dialogue") or shot.get("narration") or ""
@@ -686,12 +580,7 @@ def step5_generate_audio(storyboard):
                 _save_silence(out, float(dur))
                 continue
 
-            voice = VOICE_PARAMS.get(char, VOICE_PARAMS["narrator"]).copy()
-            voice["speed"] = voice.get("speed", 1.0) * EMOTION_SPEED.get(emotion, 1.0)
-
             ok = False
-
-            # ChatTTS
             if chat is not None:
                 try:
                     wavs = chat.infer([text])
@@ -701,27 +590,20 @@ def step5_generate_audio(storyboard):
                         if isinstance(audio, torch.Tensor):
                             torchaudio.save(out, audio.unsqueeze(0), AUDIO_SAMPLE_RATE)
                         ok = True
-                except:
-                    pass
+                except: pass
 
-            # edge-tts
             if not ok and edge_ok:
                 try:
                     import asyncio
                     vn = EDGE_V.get(char, "zh-CN-YunxiNeural")
-
                     async def _t():
                         c = edge_tts.Communicate(text, vn)
                         await c.save(out)
-
                     asyncio.run(_t())
                     ok = True
-                except:
-                    pass
+                except: pass
 
-            if not ok:
-                _save_silence(out, float(dur))
-
+            if not ok: _save_silence(out, float(dur))
             log(f"  [{count}/{total}] {sid} ({char}) {'✓' if ok else '静音'}")
 
     log("配音生成完成")
@@ -734,16 +616,10 @@ def _save_silence(output_path, duration):
         n = int(sr * duration)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         with wave.open(output_path, 'w') as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(sr)
-            for _ in range(n):
-                w.writeframes(struct.pack('<h', 0))
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+            for _ in range(n): w.writeframes(struct.pack('<h', 0))
     except:
-        run_cmd(
-            f'ffmpeg -y -f lavfi -i "anullsrc=r={AUDIO_SAMPLE_RATE}:cl=mono" '
-            f'-t {duration} -acodec pcm_s16le "{output_path}" 2>/dev/null'
-        )
+        run_cmd(f'ffmpeg -y -f lavfi -i "anullsrc=r={AUDIO_SAMPLE_RATE}:cl=mono" -t {duration} -acodec pcm_s16le "{output_path}" 2>/dev/null')
 
 
 # ============================================================
@@ -758,51 +634,37 @@ def step6_compose(storyboard):
     dirs = get_dirs()
     ep = storyboard.get("episode", 1)
 
-    # 1. SRT
     srt = f"{dirs['final']}/ep{ep:02d}.srt"
     total_dur = _make_srt(storyboard, srt)
 
-    # 2. 视频列表
     vids = []
     for scene in storyboard.get("scenes", []):
         for shot in scene.get("shots", []):
             sid = shot["shot_id"]
             vp = f"{dirs['videos']}/ep{ep:02d}_{scene['scene_id']}_{sid}.mp4"
             gp = vp.replace(".mp4", ".gif")
-            if os.path.exists(vp):
-                vids.append(vp)
+            if os.path.exists(vp): vids.append(vp)
             elif os.path.exists(gp):
-                run_cmd(
-                    f'ffmpeg -y -i "{gp}" -c:v libx264 -pix_fmt yuv420p '
-                    f'-movflags +faststart "{vp}" 2>/dev/null'
-                )
-                if os.path.exists(vp):
-                    vids.append(vp)
+                run_cmd(f'ffmpeg -y -i "{gp}" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "{vp}" 2>/dev/null')
+                if os.path.exists(vp): vids.append(vp)
 
-    # 3. 音频列表
     auds = []
     for scene in storyboard.get("scenes", []):
         for shot in scene.get("shots", []):
             sid = shot["shot_id"]
             ap = f"{dirs['audio']}/ep{ep:02d}_{scene['scene_id']}_{sid}.wav"
-            if os.path.exists(ap):
-                auds.append(ap)
+            if os.path.exists(ap): auds.append(ap)
 
     log(f"视频: {len(vids)} | 音频: {len(auds)}")
     if not vids:
-        log("[ERROR] 没有视频片段")
-        return
+        log("[ERROR] 没有视频"); return
 
-    # 4. 拼接
     cv = f"{dirs['final']}/_video.mp4"
     ca = f"{dirs['final']}/_audio.wav"
     _concat_files(vids, cv, "video")
-    if auds:
-        _concat_files(auds, ca, "audio")
-    else:
-        _save_silence(ca, total_dur)
+    if auds: _concat_files(auds, ca, "audio")
+    else: _save_silence(ca, total_dur)
 
-    # 5. 最终合成
     final = f"{dirs['final']}/episode_{ep:02d}_final.mp4"
     cmd = (
         f'ffmpeg -y -i "{cv}" -i "{ca}" '
@@ -814,27 +676,16 @@ def step6_compose(storyboard):
     run_cmd(cmd, timeout=300)
 
     if os.path.exists(final):
-        size = os.path.getsize(final) / 1e6
-        log(f"最终视频: {final} ({size:.1f} MB)")
+        log(f"最终: {final} ({os.path.getsize(final)/1e6:.1f}MB)")
     else:
-        # fallback 无字幕
-        cmd2 = (
-            f'ffmpeg -y -i "{cv}" -i "{ca}" '
-            f'-c:v libx264 -crf 20 -pix_fmt yuv420p '
-            f'-c:a aac -b:a 128k -ar 44100 -ac 2 '
-            f'-shortest -movflags +faststart "{final}"'
-        )
+        cmd2 = (f'ffmpeg -y -i "{cv}" -i "{ca}" -c:v libx264 -crf 20 -pix_fmt yuv420p '
+                f'-c:a aac -b:a 128k -ar 44100 -ac 2 -shortest -movflags +faststart "{final}"')
         run_cmd(cmd2, timeout=300)
-        if os.path.exists(final):
-            size = os.path.getsize(final) / 1e6
-            log(f"最终视频(无硬字幕): {final} ({size:.1f} MB)")
-        else:
-            log("[FAIL] 最终合成失败")
+        if os.path.exists(final): log(f"最终(无硬字幕): {final} ({os.path.getsize(final)/1e6:.1f}MB)")
+        else: log("[FAIL] 合成失败")
 
     for f in [cv, ca]:
-        if os.path.exists(f):
-            os.remove(f)
-
+        if os.path.exists(f): os.remove(f)
     log("剪辑合成完成")
 
 
@@ -845,38 +696,25 @@ def _make_srt(storyboard, path):
             dur = shot.get("duration_seconds", 3)
             text = shot.get("subtitle") or shot.get("dialogue") or ""
             if text:
-                lines.extend([
-                    str(idx),
-                    f"{seconds_to_srt_time(t)} --> {seconds_to_srt_time(t+dur)}",
-                    text, ""
-                ])
+                lines.extend([str(idx), f"{seconds_to_srt_time(t)} --> {seconds_to_srt_time(t+dur)}", text, ""])
                 idx += 1
             t += dur
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    with open(path, "w", encoding="utf-8") as f: f.write("\n".join(lines))
     log(f"SRT: {idx-1}条 | {t:.1f}s")
     return t
 
 
 def _concat_files(file_list, output, mtype):
-    list_file = output + ".list"
-    with open(list_file, "w") as f:
-        for p in file_list:
-            f.write(f"file '{p}'\n")
+    lf = output + ".list"
+    with open(lf, "w") as f:
+        for p in file_list: f.write(f"file '{p}'\n")
     if mtype == "video":
-        cmd = (
-            f'ffmpeg -y -f concat -safe 0 -i "{list_file}" '
-            f'-c:v libx264 -pix_fmt yuv420p -crf 20 -movflags +faststart "{output}"'
-        )
+        cmd = f'ffmpeg -y -f concat -safe 0 -i "{lf}" -c:v libx264 -pix_fmt yuv420p -crf 20 -movflags +faststart "{output}"'
     else:
-        cmd = (
-            f'ffmpeg -y -f concat -safe 0 -i "{list_file}" '
-            f'-acodec pcm_s16le -ar {AUDIO_SAMPLE_RATE} -ac 1 "{output}"'
-        )
+        cmd = f'ffmpeg -y -f concat -safe 0 -i "{lf}" -acodec pcm_s16le -ar {AUDIO_SAMPLE_RATE} -ac 1 "{output}"'
     run_cmd(cmd, timeout=300)
-    if os.path.exists(list_file):
-        os.remove(list_file)
+    if os.path.exists(lf): os.remove(lf)
 
 
 # ============================================================
@@ -891,50 +729,28 @@ def main():
     log(f"步数: {IMAGE_STEPS} | 分辨率: {VIDEO_RESOLUTION} | FPS: {VIDEO_FPS}")
 
     if not GOOGLE_API_KEY:
-        log("[ERROR] GOOGLE_API_KEY 未设置！请在Kaggle Secrets中添加。")
+        log("[ERROR] GOOGLE_API_KEY 未设置！")
+        log("在Kaggle Notebook左侧 → Add-ons → Secrets → 添加 GOOGLE_API_KEY")
         log("获取Key: https://aistudio.google.com/apikey")
         return
 
     t0 = time.time()
     setup_dirs()
 
-    # 依赖安装
-    try:
-        from google import genai
-    except ImportError:
-        log("安装 google-genai...")
-        run_cmd("pip install -q google-genai", timeout=120)
-
-    try:
-        import diffusers
-    except ImportError:
-        log("安装 diffusers...")
-        run_cmd("pip install -q diffusers transformers accelerate safetensors", timeout=120)
-        try:
-            run_cmd("pip install -q xformers", timeout=60)
-        except:
-            pass
-
-    try:
-        import ChatTTS
-    except ImportError:
-        log("安装 ChatTTS...")
-        run_cmd("pip install -q ChatTTS soundfile edge-tts moviepy", timeout=120)
+    # 依赖
+    _install_if_missing("google.genai", "google-genai")
+    _install_if_missing("diffusers", "diffusers transformers accelerate safetensors")
+    _install_if_missing("ChatTTS", "ChatTTS soundfile edge-tts moviepy")
 
     has_gpu = torch.cuda.is_available()
     if has_gpu:
         log(f"GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_mem / 1e9:.1f}GB)")
 
-    # 全链路
     script = step1_generate_script()
     storyboard = step2_generate_storyboard(script)
     step3_generate_images(storyboard)
-
-    if has_gpu:
-        step4_generate_videos(storyboard)
-    else:
-        _placeholder_videos(storyboard)
-
+    if has_gpu: step4_generate_videos(storyboard)
+    else: _placeholder_videos(storyboard)
     step5_generate_audio(storyboard)
     step6_compose(storyboard)
 
@@ -943,6 +759,17 @@ def main():
     log(f"全部完成! 耗时: {elapsed:.1f} 分钟")
     log(f"输出: {get_dirs()['final']}/episode_{EPISODE_NUM:02d}_final.mp4")
     log(f"{'=' * 50}")
+
+
+def _install_if_missing(module_name, pip_packages):
+    try:
+        __import__(module_name)
+    except ImportError:
+        log(f"安装 {pip_packages}...")
+        run_cmd(f"pip install -q {pip_packages}", timeout=120)
+        try:
+            run_cmd("pip install -q xformers", timeout=60)
+        except: pass
 
 
 if __name__ == "__main__":
