@@ -9,45 +9,56 @@
 5. **配音生成** - ChatTTS / edge-tts
 6. **剪辑合成** - FFmpeg
 
-## Kaggle Notebook 使用（2步）
+## Kaggle Notebook 使用
 
-### Step 1: 下载模型（首次运行）
+### ⚠️ 注意：不要在已有kaggle-ai-series目录下clone
+
+如果之前已经clone过，先清理：
+```python
+!rm -rf kaggle-ai-series
+```
+
+### Step 1: 克隆仓库（首次）
 
 ```python
 !git clone https://github.com/szchengmi/kaggle-ai-series.git
+```
+
+### Step 2: 下载模型（首次，约15-30分钟）
+
+```python
 %cd /kaggle/working/kaggle-ai-series/scripts
 !python download_models.py
 ```
 
-下载完成后，在Kaggle Output目录 **Save as Dataset**（名称：`kaggle-ai-series-models`）。
+下载完成后，Kaggle页面 → Output → **Save as Dataset**，名称填 `kaggle-ai-series-models`
 
-### Step 2: 运行流水线
+### Step 3: 运行流水线
 
 ```python
-!git clone https://github.com/szchengmi/kaggle-ai-series.git
 %cd /kaggle/working/kaggle-ai-series/scripts
 !python kaggle_pipeline.py
 ```
 
-如果已保存Dataset，在Notebook中 **Add Data → kaggle-ai-series-models** 挂载，模型会自动加载，无需重复下载。
+如果已挂载Dataset，模型自动复用。
 
 ## 设置Kaggle Secrets（可选）
 
-在 Notebook 左侧 **Add-ons → Secrets** 中可以添加：
-- `GOOGLE_API_KEY` — 从 [Google AI Studio](https://aistudio.google.com/apikey) 获取（可选，不设置则用本地Qwen模型）
-- `HF_TOKEN` — 从 [HuggingFace](https://huggingface.co/settings/tokens) 获取（可选）
+Notebook 左侧 **Add-ons → Secrets**：
+- `GOOGLE_API_KEY` — [获取](https://aistudio.google.com/apikey)（不设置则用本地Qwen）
+- `HF_TOKEN` — [获取](https://huggingface.co/settings/tokens)（可选）
 
 ## 项目结构
 
 ```
 scripts/
-├── download_models.py          # 🔽 模型下载脚本（首次运行）
+├── download_models.py          # 🔽 模型下载（首次运行）
 ├── kaggle_pipeline.py          # 🔥 端到端主流程
 ├── config/config.env           # 参数配置
 └── requirements.txt            # Python依赖
 ```
 
-## 模型列表（download_models.py）
+## 模型列表
 
 | 模型 | 用途 | 大小 |
 |------|------|------|
@@ -56,13 +67,14 @@ scripts/
 | guoyww/animatediff-motion-adapter-v1-5-2 | AnimateDiff视频 | ~301MB |
 | Qwen/Qwen2.5-3B-Instruct | 本地LLM备用 | ~6.44GB |
 
-## 各步骤耗时（T4 GPU）
+总计约 **9.5GB**，Kaggle Dataset上限20GB，够用。
 
-| 步骤 | 工具 | 时间 |
-|------|------|------|
-| 剧本 | Gemini API / Qwen本地 | ~30秒 / ~2分钟 |
-| 分镜 | Python | ~5秒 |
-| 画面 | SD 1.5 | ~10-20分钟 |
-| 视频 | AnimateDiff-Lightning | ~20-40分钟 |
-| 配音 | ChatTTS | ~5-10分钟 |
-| 剪辑 | FFmpeg | ~1-2分钟 |
+## 耗时（T4 GPU）
+
+| 步骤 | 时间 |
+|------|------|
+| 模型下载 | ~15-30分钟（一次性） |
+| 剧本 | ~30秒 |
+| 画面 | ~10-20分钟 |
+| 视频 | ~20-40分钟 |
+| 配音+剪辑 | ~10分钟 |
