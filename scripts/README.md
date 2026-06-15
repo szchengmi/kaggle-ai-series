@@ -25,13 +25,14 @@
 ### 3. 第一个Cell克隆并运行
 ```python
 !git clone https://github.com/szchengmi/kaggle-ai-series.git
-%cd kaggle-ai-series/scripts
+%cd /kaggle/working/kaggle-ai-series/scripts
 !python kaggle_pipeline.py
 ```
 
 ## 项目结构
 
 ```
+scripts/
 ├── kaggle_pipeline.py          # 🔥 端到端主流程（Kaggle直接跑这个）
 ├── config/config.env           # 参数配置
 └── requirements.txt            # Python依赖
