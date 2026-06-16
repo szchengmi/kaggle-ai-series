@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """精确检测 — 模拟pipeline的路径搜索逻辑"""
 import os
+import sys
 
-print("模拟 pipeline 路径搜索:")
+# 先import torch（Kaggle环境需要先import再设置env）
+import torch
+print(f"PyTorch: {torch.__version__}")
+print(f"CUDA: {torch.cuda.is_available()}")
+if torch.cuda.is_available():
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+print("\n模拟 pipeline 路径搜索:")
 print("=" * 60)
 
 MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"  # fallback
@@ -28,13 +36,12 @@ print(f"SD路径: {sd_path}")
 print(f"  存在: {os.path.isdir(sd_path)}")
 print(f"  文件: {[f for f in os.listdir(sd_path) if os.path.isfile(f'{sd_path}/{f}')]}")
 
-# 测试diffusers能否识别
 try:
     from diffusers import StableDiffusionPipeline
     print("\n尝试加载 SD 1.5...")
     pipe = StableDiffusionPipeline.from_pretrained(
         sd_path,
-        torch_dtype=__import__('torch').float16,
+        torch_dtype=torch.float16,
         safety_checker=None,
         requires_safety_checker=False,
         local_files_only=True,
@@ -42,9 +49,10 @@ try:
     )
     print("✅ SD 1.5 加载成功!")
     del pipe
-    import torch; torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
 except Exception as e:
     print(f"❌ SD 1.5 加载失败: {e}")
+    import traceback; traceback.print_exc()
 
 # 测试Qwen
 qwen_path = f"{MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct"
@@ -61,4 +69,21 @@ try:
 except Exception as e:
     print(f"❌ Qwen tokenizer 加载失败: {e}")
 
+# 测试AnimateDiff
+ad_path = f"{MODEL_CACHE_DIR}/animatediff"
+print(f"\nAnimateDiff路径: {ad_path}")
+print(f"  存在: {os.path.isdir(ad_path)}")
+if os.path.isdir(ad_path):
+    print(f"  文件: {[f for f in os.listdir(ad_path) if os.path.isfile(f'{ad_path}/{f}')]}")
+
+try:
+    from diffusers import MotionAdapter
+    print("\n尝试加载 AnimateDiff...")
+    adapter = MotionAdapter.from_pretrained(ad_path, torch_dtype=torch.float16, local_files_only=True, cache_dir=ad_path)
+    print("✅ AnimateDiff 加载成功!")
+    del adapter
+except Exception as e:
+    print(f"❌ AnimateDiff 加载失败: {e}")
+
 print("\n" + "=" * 60)
+print("诊断完成")
