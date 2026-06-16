@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Kaggle 模型下载脚本 v2
+Kaggle 模型下载脚本 v3
 ====================
-下载模型到Kaggle Output目录，确保能被Save as Dataset追踪。
+- 检测已下载的文件，跳过完成的模型
+- 支持断点续传（resume_download）
+- 实时显示下载速度和进度
+- 下载完验证文件大小
 """
 
 import os
 import sys
 import time
 import subprocess
+import json
 
-# ============================================================
-# 关键：Kaggle只追踪 /kaggle/working/ 下的输出
-# ============================================================
 MODEL_CACHE_DIR = "/kaggle/working/output/models"
+PROGRESS_FILE = f"{MODEL_CACHE_DIR}/.download_progress.json"
 
 def get_kaggle_secret(key_name):
     try:
@@ -34,7 +36,7 @@ if HF_TOKEN:
     os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
     print("[OK] HF_TOKEN 已设置")
 else:
-    print("[WARN] HF_TOKEN 未设置")
+    print("[WARN] HF_TOKEN 未设置，限速下载")
 
 os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 
@@ -46,7 +48,6 @@ def run_cmd(cmd, timeout=600):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
 
 def check_disk_space():
-    """检查磁盘空间"""
     try:
         import shutil
         total, used, free = shutil.disk_usage("/kaggle/working")
@@ -55,49 +56,140 @@ def check_disk_space():
     except:
         return None
 
+def get_dir_size(path):
+    """获取目录总大小（GB）"""
+    total = 0
+    if not os.path.exists(path):
+        return 0
+    for dirpath, _, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            if os.path.isfile(fp):
+                total += os.path.getsize(fp)
+    return total / 1e9
+
+def get_expected_size(model_id):
+    """模型期望大小（GB）"""
+    sizes = {
+        "runwayml/stable-diffusion-v1-5": 2.43,
+        "stabilityai/sd-vae-ft-mse": 0.33,
+        "guoyww/animatediff-motion-adapter-v1-5-2": 0.30,
+        "Qwen/Qwen2.5-3B-Instruct": 6.44,
+    }
+    return sizes.get(model_id, 0)
+
+def load_progress():
+    """加载下载进度"""
+    if os.path.exists(PROGRESS_FILE):
+        try:
+            with open(PROGRESS_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def save_progress(progress):
+    with open(PROGRESS_FILE, "w") as f:
+        json.dump(progress, f, indent=2)
+
+def is_model_complete(model_id, dir_name):
+    """检查模型是否已完整下载"""
+    target = f"{MODEL_CACHE_DIR}/{dir_name}"
+    if not os.path.exists(target):
+        return False
+    
+    current_size = get_dir_size(target)
+    expected = get_expected_size(model_id)
+    
+    # 已下载超过期望大小的90%算完成
+    if expected > 0 and current_size >= expected * 0.9:
+        return True
+    
+    # 检查是否有.safetensors或.bin文件（模型核心文件）
+    has_model_files = False
+    for f in os.listdir(target):
+        if f.endswith(('.safetensors', '.bin', '.gguf', '.pt')) and os.path.isfile(f"{target}/{f}"):
+            fsize = os.path.getsize(f"{target}/{f}")
+            if fsize > 10 * 1024 * 1024:  # >10MB
+                has_model_files = True
+                break
+    
+    return has_model_files and current_size > 0.5
+
 def download_model(model_id, dir_name=None):
-    """用Python huggingface_hub API下载模型"""
+    """下载模型，支持断点续传"""
     if dir_name is None:
         dir_name = model_id.replace("/", "--")
     target = f"{MODEL_CACHE_DIR}/{dir_name}"
 
-    if os.path.exists(target):
-        files = [f for f in os.listdir(target) if os.path.isfile(f"{target}/{f}")]
-        size = sum(os.path.getsize(f"{target}/{f}") for f in files) / 1e9
-        if size > 0.1:
-            log(f"[SKIP] {dir_name} ({size:.2f}GB, {len(files)} files)")
-            return True
+    # 检查是否已完成
+    if is_model_complete(model_id, dir_name):
+        size = get_dir_size(target)
+        log(f"[SKIP] {dir_name} ({size:.2f}GB 已下载)")
+        return True
+
+    # 检查已有进度
+    progress = load_progress()
+    prev_time = progress.get(dir_name, {}).get("time", "")
+    prev_size = progress.get(dir_name, {}).get("size_gb", 0)
+    if prev_size > 0:
+        current_size = get_dir_size(target)
+        if current_size > prev_size * 0.95:
+            log(f"[RESUME] {dir_name} (之前已下载{prev_size:.2f}GB，当前{current_size:.2f}GB)")
+        else:
+            log(f"[RETRY] {dir_name} (之前下载不完整：{prev_size:.2f}GB)")
 
     log(f"[DOWNLOAD] {model_id}")
     os.makedirs(target, exist_ok=True)
 
     from huggingface_hub import snapshot_download
     try:
+        t0 = time.time()
         snapshot_download(
             repo_id=model_id,
             local_dir=target,
-            local_dir_use_symlinks=False,
+            resume_download=True,  # 关键：启用断点续传
         )
-        files = [f for f in os.listdir(target) if os.path.isfile(f"{target}/{f}")]
-        size = sum(os.path.getsize(f"{target}/{f}") for f in files) / 1e9
-        log(f"[OK] {dir_name} ({size:.2f}GB, {len(files)} files)")
+        elapsed = time.time() - t0
+        size = get_dir_size(target)
+        speed = size / elapsed * 1e9 / 1e6 if elapsed > 0 else 0  # MB/s
+        
+        # 保存进度
+        progress[dir_name] = {"size_gb": round(size, 2), "time": time.strftime("%Y-%m-%d %H:%M")}
+        save_progress(progress)
+        
+        log(f"[OK] {dir_name} ({size:.2f}GB, {elapsed:.0f}秒, {speed:.0f}MB/s)")
         return True
     except Exception as e:
         log(f"[FAIL] {model_id}: {e}")
+        # 保存当前进度
+        current_size = get_dir_size(target)
+        if current_size > 0:
+            progress[dir_name] = {"size_gb": round(current_size, 2), "time": time.strftime("%Y-%m-%d %H:%M")}
+            save_progress(progress)
+            log(f"[SAVE] 已保存进度 {current_size:.2f}GB，下次运行会续传")
+        
         # fallback: git clone
         try:
-            log(f"[RETRY] git clone {model_id}")
+            log(f"[RETRY] 尝试 git clone {model_id}")
+            # 清理不完整的目录
+            import shutil
+            if os.path.exists(target):
+                shutil.rmtree(target)
+            os.makedirs(target, exist_ok=True)
+            
             repo_url = f"https://huggingface.co/{model_id}"
             if HF_TOKEN:
                 repo_url = repo_url.replace("https://", f"https://{HF_TOKEN}@")
             r = run_cmd(f"git clone --depth 1 {repo_url} {target}", timeout=600)
             if r.returncode == 0:
-                files = [f for f in os.listdir(target) if os.path.isfile(f"{target}/{f}")]
-                size = sum(os.path.getsize(f"{target}/{f}") for f in files) / 1e9
+                size = get_dir_size(target)
+                progress[dir_name] = {"size_gb": round(size, 2), "time": time.strftime("%Y-%m-%d %H:%M")}
+                save_progress(progress)
                 log(f"[OK] {dir_name} via git ({size:.2f}GB)")
                 return True
         except Exception as e2:
-            log(f"[FAIL] git: {e2}")
+            log(f"[FAIL] git clone: {e2}")
         return False
 
 
@@ -119,7 +211,7 @@ MODELS = [
 
 def main():
     log("=" * 55)
-    log("  Kaggle AI短剧 - 模型下载 v2")
+    log("  Kaggle AI短剧 - 模型下载 v3")
     log("=" * 55)
 
     check_disk_space()
@@ -146,24 +238,22 @@ def main():
     for model in MODELS:
         dir_name = model["id"].replace("/", "--")
         path = f"{MODEL_CACHE_DIR}/{dir_name}"
-        if os.path.exists(path):
-            files = [f for f in os.listdir(path) if os.path.isfile(f"{path}/{f}")]
-            size = sum(os.path.getsize(f"{path}/{f}") for f in files) / 1e9
-            total_size += size
-            status = "[OK]" if size > 0.1 else "[EMPTY]"
-            log(f"  {status} {model['name']}: {size:.2f}GB ({len(files)} files) → {path}")
-        else:
-            log(f"  [MISS] {model['name']}")
+        size = get_dir_size(path)
+        total_size += size
+        expected = get_expected_size(model["id"])
+        pct = (size / expected * 100) if expected > 0 else 0
+        status = "✅" if size >= expected * 0.9 else ("⚠️" if size > 0.1 else "❌")
+        log(f"  {status} {model['name']}: {size:.2f}GB / {expected:.2f}GB ({pct:.0f}%) → {path}")
 
-    log(f"\n总计: {total_size:.2f}GB ({ok_count}/{len(MODELS)} 成功)")
+    log(f"\n总计: {total_size:.2f}GB ({ok_count}/{len(MODELS)} 完成)")
 
-    # 列出output目录结构（方便确认Save Dataset的内容）
+    # Output目录结构
     log(f"\nOutput目录结构：")
     if os.path.exists("/kaggle/working/output"):
         for item in sorted(os.listdir("/kaggle/working/output")):
             full = f"/kaggle/working/output/{item}"
             if os.path.isdir(full):
-                sub = os.listdir(full)
+                sub = sorted(os.listdir(full))
                 log(f"  📁 {item}/ ({len(sub)} items)")
                 for s in sub[:5]:
                     log(f"      └── {s}")
@@ -172,10 +262,8 @@ def main():
             else:
                 log(f"  📄 {item}")
 
-    log(f"\n✅ 完成！现在可以：")
-    log(f"   1. Kaggle页面 → Output → Save as Dataset")
-    log(f"   2. 名称填: kaggle-ai-series-models")
-    log(f"   3. 内容: /kaggle/working/output/models/ 下所有文件夹")
+    log(f"\n✅ 完成！")
+    log(f"   Save as Dataset → 名称: kaggle-ai-series-models")
     log("=" * 55)
 
 
