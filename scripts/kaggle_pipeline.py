@@ -647,13 +647,16 @@ def step3_generate_images(storyboard):
             cache_dir=sd_cache,
         )
 
-    try:
-        from diffusers import AutoencoderKL
-        vp = f"{dirs['models']}/vae-ft-mse"
-        if not os.path.exists(vp): vp = "stabilityai/sd-vae-ft-mse"
-        pipe.vae = AutoencoderKL.from_pretrained(vp, torch_dtype=DTYPE)
-    except Exception as e:
-        log(f"VAE: {e}")
+    # VAE: from_single_file已经包含vae，不需要额外加载
+    # 只在vae为None时才尝试加载外部VAE
+    if pipe.vae is None:
+        try:
+            from diffusers import AutoencoderKL
+            vp = f"{dirs['models']}/vae-ft-mse"
+            if not os.path.exists(vp): vp = "stabilityai/sd-vae-ft-mse"
+            pipe.vae = AutoencoderKL.from_pretrained(vp, torch_dtype=DTYPE)
+        except Exception as e:
+            log(f"VAE: {e}")
 
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
     if has_gpu:
