@@ -94,14 +94,14 @@ if HF_TOKEN:
 # ============================================================
 
 BASE_DIR = "/kaggle/working/ai-series"
-# 模型缓存目录 — 搜索kaggle/input下所有Dataset里的models目录
+# 模型缓存目录 — 递归搜索 /kaggle/input/ 下所有 models/ 目录
 MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"  # fallback
-_input_base = "/kaggle/input"
-if os.path.isdir(_input_base):
-    for ds_name in sorted(os.listdir(_input_base)):
-        candidate = os.path.join(_input_base, ds_name, "kaggle-ai-series", "models")
-        if os.path.isdir(candidate):
-            MODEL_CACHE_DIR = candidate
+for _root, _dirs, _files in os.walk("/kaggle/input"):
+    if "models" in _dirs:
+        _candidate = os.path.join(_root, "models")
+        # 检查是否包含我们需要的模型子目录
+        if os.path.isdir(os.path.join(_candidate, "stable-diffusion-v1-5")):
+            MODEL_CACHE_DIR = _candidate
             break
 
 # HuggingFace模型缓存
