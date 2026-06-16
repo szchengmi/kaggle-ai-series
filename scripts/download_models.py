@@ -106,7 +106,7 @@ def get_repo_file_list(model_id):
         log(f"  ⚠️  获取文件列表失败: {e}")
         return []
 
-def filter_core_files(all_files):
+def filter_core_files(all_files, model_id=None):
     """过滤只保留核心模型文件"""
     keep = []
     for f in all_files:
@@ -114,6 +114,13 @@ def filter_core_files(all_files):
         if any(x in f for x in ['.git', 'tests/', 'test_', '.github', 'LICENSE', 'README.md',
                                   '.gitattributes', '.gitignore', 'Makefile']):
             continue
+        # SD 1.5特殊处理：只保留ema-only版本（4GB），不要完整未剪枝版（7.7GB）
+        if model_id == "runwayml/stable-diffusion-v1-5":
+            if f == "v1-5-pruned-emaonly.safetensors":
+                keep.append(f)
+                continue
+            if f == "v1-5-pruned.safetensors":
+                continue  # 跳过7.7GB的完整未剪枝版
         # 保留模型核心文件
         if any(f.endswith(p) for p in ['.safetensors', '.bin', '.gguf', '.pt', '.pth',
                                        'config.json', 'tokenizer.json', 'tokenizer_config.json',
@@ -137,16 +144,17 @@ def download_file_wget(url, dest_path):
     return r.returncode == 0
 
 def download_file_hf_api(model_id, filename, dest_path):
-    """用huggingface_hub hf_hub_download下载单个文件（直接到目标位置，不经过.cache）"""
+    """用huggingface_hub hf_hub_download下载单文件，直接到目标位置"""
     from huggingface_hub import hf_hub_download
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     try:
-        # 下载到指定目录
+        dest_dir = os.path.dirname(dest_path)
+        os.makedirs(dest_dir, exist_ok=True)
+        # 关键：用cache_dir直接指向最终目录，避免.cache临时目录
         result = hf_hub_download(
             repo_id=model_id,
             filename=filename,
-            local_dir=os.path.dirname(dest_path),
-            local_dir_use_symlinks=False,
+            local_dir=dest_dir,
+            cache_dir=dest_dir,
         )
         return True
     except Exception as e:
@@ -173,7 +181,7 @@ def download_model(model_id, dir_name):
         return False
 
     # 过滤核心文件
-    core_files = filter_core_files(all_files)
+    core_files = filter_core_files(all_files, model_id)
     log(f"  文件: {len(all_files)}个 → 下载{len(core_files)}个核心文件")
 
     # 逐个文件下载
