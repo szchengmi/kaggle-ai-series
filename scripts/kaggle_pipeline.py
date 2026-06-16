@@ -657,7 +657,11 @@ def step3_generate_images(storyboard):
 
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
     if has_gpu:
-        pipe.enable_attention_slicing().enable_vae_slicing().to(device)
+        try: pipe.enable_attention_slicing()
+        except: pass
+        try: pipe.enable_vae_slicing()
+        except: pass
+        pipe.to(device)
     else:
         pipe.to(device)
     try:
@@ -761,7 +765,11 @@ def step4_generate_videos(storyboard):
         )
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config, beta_schedule="linear", steps_offset=1)
     if has_gpu:
-        pipe.enable_attention_slicing().enable_vae_slicing().to(device)
+        try: pipe.enable_attention_slicing()
+        except: pass
+        try: pipe.enable_vae_slicing()
+        except: pass
+        pipe.to(device)
     else:
         pipe.to(device)
     try: pipe.enable_xformers_memory_efficient_attention()
