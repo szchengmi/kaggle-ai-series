@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
-Kaggle 模型下载脚本 v11
+Kaggle 模型下载脚本 v12
 ====================
-用huggingface_hub Python API直接下载（不走代理，Kaggle能直连hf.co）
-逐个下载，实时容量监控，断点续传
+用aria2c直接下载每个模型的文件（不经过.cache临时目录）
+逐个下载，实时容量监控
 """
 
 import os
 import sys
 import time
 import shutil
+import subprocess
+import json
 
 MODEL_CACHE_DIR = "/kaggle/working/output/models"
+PROGRESS_FILE = f"{MODEL_CACHE_DIR}/.download_progress.json"
 
 def get_kaggle_secret(key_name):
     # 方式1: kaggle_secrets库
@@ -19,41 +22,25 @@ def get_kaggle_secret(key_name):
         from kaggle_secrets import UserSecretsClient
         val = UserSecretsClient().get_secret(key_name)
         if val:
-            print(f"[DEBUG] {key_name} via kaggle_secrets: {val[:10]}...")
             return val
-        else:
-            print(f"[DEBUG] {key_name} via kaggle_secrets: 返回空值")
-    except Exception as e:
-        print(f"[DEBUG] {key_name} via kaggle_secrets 失败: {e}")
+    except:
+        pass
     # 方式2: Kaggle自动注入的变量
     try:
         if key_name == "HF_TOKEN":
-            val = secret_value_1  # noqa: F821
-            if val:
-                print(f"[DEBUG] HF_TOKEN via secret_value_1: {val[:10]}...")
-            return val
+            return secret_value_1  # noqa: F821
         if key_name == "GOOGLE_API_KEY":
-            val = secret_value_0  # noqa: F821
-            if val:
-                print(f"[DEBUG] GOOGLE_API_KEY via secret_value_0: {val[:10]}...")
-            return val
-    except NameError:
-        print(f"[DEBUG] secret_variable未注入")
-    except Exception as e:
-        print(f"[DEBUG] secret_variable失败: {e}")
+            return secret_value_0  # noqa: F821
+    except:
+        pass
     # 方式3: 环境变量
-    val = os.environ.get(key_name, "")
-    if val:
-        print(f"[DEBUG] {key_name} via env: {val[:10]}...")
-    else:
-        print(f"[DEBUG] {key_name} via env: 未设置")
-    return val
+    return os.environ.get(key_name, "")
 
 HF_TOKEN = get_kaggle_secret("HF_TOKEN")
 if HF_TOKEN:
     os.environ["HF_HUB_TOKEN"] = HF_TOKEN
     os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
-    print("[OK] HF_TOKEN")
+    print(f"[OK] HF_TOKEN: {HF_TOKEN[:10]}...")
 else:
     print("[WARN] HF_TOKEN 未设置")
 
@@ -62,6 +49,9 @@ os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 def log(msg):
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+def run_cmd(cmd, timeout=300):
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
 
 def get_disk_free_gb():
     import shutil as _s
@@ -99,8 +89,70 @@ def is_model_ready(dir_name, min_size_mb=100):
                 return True
     return False
 
-def download_model(model_id, dir_name, allow_patterns=None):
-    """用huggingface_hub snapshot_download直接下载"""
+def get_repo_file_list(model_id):
+    """列出仓库中所有文件"""
+    from huggingface_hub import list_repo_tree
+    try:
+        files = []
+        for f in list_repo_tree(repo_id=model_id, repo_type="model"):
+            if hasattr(f, 'size'):
+                files.append(f.path)
+            else:
+                files.append(f)
+        return files
+    except Exception as e:
+        log(f"  ⚠️  获取文件列表失败: {e}")
+        return []
+
+def filter_core_files(all_files):
+    """过滤只保留核心模型文件"""
+    keep = []
+    for f in all_files:
+        # 跳过无关文件
+        if any(x in f for x in ['.git', 'tests/', 'test_', '.github', 'LICENSE', 'README.md',
+                                  '.gitattributes', '.gitignore', 'Makefile']):
+            continue
+        # 保留模型核心文件
+        if any(f.endswith(p) for p in ['.safetensors', '.bin', '.gguf', '.pt', '.pth',
+                                       'config.json', 'tokenizer.json', 'tokenizer_config.json',
+                                       'special_tokens_map.json', 'merges.txt', 'vocab.json',
+                                       'generation_config.json', 'preprocessor_config.json']):
+            keep.append(f)
+    return keep
+
+def download_file_aria2(url, dest_path):
+    """用aria2c下载单个文件"""
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    cmd = f'aria2c -x 4 -s 4 -k 1M --async-dns=false -o "{os.path.basename(dest_path)}" -d "{os.path.dirname(dest_path)}" "{url}"'
+    r = run_cmd(cmd, timeout=300)
+    return r.returncode == 0
+
+def download_file_wget(url, dest_path):
+    """用wget下载单个文件"""
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    cmd = f'wget -q --show-progress -O "{dest_path}" "{url}"'
+    r = subprocess.run(cmd, shell=True, timeout=300)
+    return r.returncode == 0
+
+def download_file_hf_api(model_id, filename, dest_path):
+    """用huggingface_hub hf_hub_download下载单个文件（直接到目标位置，不经过.cache）"""
+    from huggingface_hub import hf_hub_download
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    try:
+        # 下载到指定目录
+        result = hf_hub_download(
+            repo_id=model_id,
+            filename=filename,
+            local_dir=os.path.dirname(dest_path),
+            local_dir_use_symlinks=False,
+        )
+        return True
+    except Exception as e:
+        log(f"    fail {filename}: {e}")
+        return False
+
+def download_model(model_id, dir_name):
+    """逐个文件下载模型"""
     target = f"{MODEL_CACHE_DIR}/{dir_name}"
 
     if is_model_ready(dir_name):
@@ -112,26 +164,53 @@ def download_model(model_id, dir_name, allow_patterns=None):
     os.makedirs(target, exist_ok=True)
     t0 = time.time()
 
-    from huggingface_hub import snapshot_download
-    try:
-        snapshot_download(
-            repo_id=model_id,
-            local_dir=target,
-            allow_patterns=allow_patterns,
-            resume_download=True,
-        )
-        elapsed = time.time() - t0
-        size = get_dir_size_gb(target)
-        if size > 0.1:
-            log(f"  ✅ {dir_name} ({size:.2f}GB, {elapsed:.0f}秒)")
-            return True
+    # 获取文件列表
+    all_files = get_repo_file_list(model_id)
+    if not all_files:
+        log(f"  ❌ 无法获取文件列表")
+        return False
+
+    # 过滤核心文件
+    core_files = filter_core_files(all_files)
+    log(f"  文件: {len(all_files)}个 → 下载{len(core_files)}个核心文件")
+
+    # 逐个文件下载
+    ok = 0
+    fail = 0
+    base_url = f"https://huggingface.co/{model_id}/resolve/main"
+
+    for f in core_files:
+        dest = f"{target}/{f}"
+        if os.path.exists(dest) and os.path.getsize(dest) > 1024:
+            ok += 1
+            continue
+
+        url = f"{base_url}/{f}"
+
+        # 方式1: hf_hub_download
+        if download_file_hf_api(model_id, f, dest):
+            ok += 1
         else:
-            log(f"  ❌ 下载为空")
-            shutil.rmtree(target, ignore_errors=True)
-            return False
-    except Exception as e:
-        log(f"  ❌ {e}")
-        shutil.rmtree(target, ignore_errors=True)
+            # 方式2: aria2c
+            if download_file_aria2(url, dest):
+                ok += 1
+            else:
+                fail += 1
+
+        # 每个文件后检查容量
+        free = get_disk_free_gb()
+        if free < 1:
+            log(f"  ⚠️  磁盘空间不足！剩余{free:.1f}GB")
+            break
+
+    elapsed = time.time() - t0
+    size = get_dir_size_gb(target)
+
+    if ok > 0 and size > 0.1:
+        log(f"  ✅ {dir_name} ({size:.2f}GB, {ok}/{len(core_files)}个文件, {elapsed:.0f}秒)")
+        return True
+    else:
+        log(f"  ❌ 失败 ({fail}个文件失败)")
         return False
 
 
@@ -144,22 +223,19 @@ MODELS = [
         "id": "runwayml/stable-diffusion-v1-5",
         "name": "SD 1.5",
         "dir": "stable-diffusion-v1-5",
-        "desc": "~2.43GB (完整pipeline)",
-        "patterns": None,
+        "desc": "~2.43GB",
     },
     {
         "id": "guoyww/animatediff-motion-adapter-v1-5-2",
         "name": "AnimateDiff",
         "dir": "animatediff",
-        "desc": "~301MB (核心权重)",
-        "patterns": ["diffusion_pytorch_model.safetensors", "config.json"],
+        "desc": "~301MB",
     },
     {
         "id": "Qwen/Qwen2.5-3B-Instruct",
         "name": "Qwen2.5-3B",
         "dir": "Qwen2.5-3B-Instruct",
-        "desc": "~6.44GB (完整模型)",
-        "patterns": None,
+        "desc": "~6.44GB",
     },
 ]
 
@@ -170,18 +246,18 @@ MODELS = [
 
 def main():
     log("=" * 55)
-    log("  Kaggle AI短剧 - 模型下载 v11")
+    log("  Kaggle AI短剧 - 模型下载 v12 (aria2/逐文件)")
     log("=" * 55)
     log(f"目标: {MODEL_CACHE_DIR}")
     check_capacity("初始 ")
 
-    import subprocess
-    subprocess.run("pip install -q -U huggingface_hub", shell=True, timeout=120)
+    # 安装huggingface_hub
+    subprocess.run("pip install -q -U huggingface_hub aria2", shell=True, timeout=120)
 
     for i, model in enumerate(MODELS, 1):
         log(f"\n{'='*55}")
         log(f"[{i}/{len(MODELS)}] {model['name']} ({model['desc']})")
-        download_model(model["id"], model["dir"], model["patterns"])
+        download_model(model["id"], model["dir"])
         check_capacity(f"#{i} ")
 
     # 最终结果
