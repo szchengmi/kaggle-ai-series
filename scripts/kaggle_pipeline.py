@@ -745,25 +745,108 @@ def _save_placeholder_image(shot, output_path):
 
 
 # ============================================================
-# Step 4: 视频生成 (SD图片 + FFmpeg动态效果)
-# 不依赖AnimateDiff（config版本与diffusers 0.37.1不兼容）
-# 方案：用Step3已生成的图片 + zoompan/dolly相机运动
+# Step 4: 视频生成 (AnimateDiff + SD 1.5)
+# 修复AnimateDiff config兼容性问题：
+#   v0.22的字段(motion_activation_fn等)在0.37.1被忽略
+#   需要在加载前清理config.json
 # ============================================================
+
+_ANIMATEDIFF_COMPAT = {
+    # 旧字段名 → 新字段名（或删除）
+    "motion_activation_fn": None,       # 删除（0.37.1不支持）
+    "motion_attention_bias": None,      # 删除
+    "motion_cross_attention_dim": None, # 删除
+    "motion_layers_per_block": "motion_transformer_layers_per_block",
+    "motion_mid_block_layers_per_block": "motion_transformer_layers_per_mid_block",
+}
+
+
+def _fix_animatediff_config(config_path):
+    """修复AnimateDiff config.json，使其兼容diffusers 0.37.1"""
+    if not os.path.isfile(config_path):
+        return config_path
+    try:
+        with open(config_path, "r") as f:
+            cfg = json.load(f)
+        changed = False
+        for old_key, new_key in _ANIMATEDIFF_COMPAT.items():
+            if old_key in cfg:
+                if new_key is None:
+                    del cfg[old_key]
+                    changed = True
+                    log(f"  删除不兼容字段: {old_key}")
+                else:
+                    cfg[new_key] = cfg.pop(old_key)
+                    changed = True
+                    log(f"  重命名字段: {old_key} → {new_key}")
+        if changed:
+            fixed_path = config_path + ".fixed"
+            with open(fixed_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+            log(f"  修复后的config: {fixed_path}")
+            return fixed_path
+    except Exception as e:
+        log(f"  修复config失败: {e}")
+    return config_path
+
 
 def step4_generate_videos(storyboard):
     log("=" * 50)
-    log("Step 4: 视频生成 (图片→视频 + FFmpeg动态)")
+    log("Step 4: 视频生成 (AnimateDiff-Lightning)")
     log("=" * 50)
 
+    has_gpu = torch.cuda.is_available()
+    device = "cuda" if has_gpu else "cpu"
     dirs = get_dirs()
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
 
-    ZOOMPAN = {
-        "static": "zoompan=z='1.0':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={nf}:s={w}x{h}:fps={fps}",
-        "pan_left": "zoompan=z='1.05':x='iw/2-(iw/zoom/2)+on*2':y='ih/2-(ih/zoom/2)':d={nf}:s={w}x{h}:fps={fps}",
-        "pan_right": "zoompan=z='1.05':x='iw/2-(iw/zoom/2)-on*2':y='ih/2-(ih/zoom/2)':d={nf}:s={w}x{h}:fps={fps}",
-        "dolly_in": "zoompan=z='1.0+on*0.003':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={nf}:s={w}x{h}:fps={fps}",
-        "dolly_out": "zoompan=z='1.05-on*0.003':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={nf}:s={w}x{h}:fps={fps}",
+    from diffusers import StableDiffusionPipeline, MotionAdapter, EulerAncestralDiscreteScheduler
+
+    mp = f"{dirs['models']}/stable-diffusion-v1-5"
+    if not os.path.exists(mp) or not os.listdir(mp): mp = "runwayml/stable-diffusion-v1-5"
+    motp = f"{dirs['models']}/animatediff"
+    if not os.path.exists(motp) or not os.listdir(motp): motp = "guoyww/animatediff-motion-adapter-v1-5-2"
+
+    # 修复AnimateDiff config（关键！）
+    ad_config = f"{motp}/config.json"
+    fixed_config = _fix_animatediff_config(ad_config)
+    load_path = os.path.dirname(fixed_config)
+
+    log("加载AnimateDiff...")
+    adapter = MotionAdapter.from_pretrained(load_path, torch_dtype=DTYPE)
+    sd_file = f"{mp}/v1-5-pruned-emaonly.safetensors"
+    if os.path.isfile(sd_file):
+        sd_cache = f"{BASE_DIR}/cache/stable-diffusion-v1-5"
+        os.makedirs(sd_cache, exist_ok=True)
+        pipe = StableDiffusionPipeline.from_single_file(
+            sd_file, motion_adapter=adapter, torch_dtype=DTYPE,
+            safety_checker=None, requires_safety_checker=False,
+            cache_dir=sd_cache,
+        )
+    else:
+        pipe = StableDiffusionPipeline.from_pretrained(
+            mp, motion_adapter=adapter, torch_dtype=DTYPE,
+            safety_checker=None, requires_safety_checker=False,
+        )
+    pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config, beta_schedule="linear", steps_offset=1)
+    if has_gpu:
+        try: pipe.enable_attention_slicing()
+        except: pass
+        try: pipe.enable_vae_slicing()
+        except: pass
+        pipe.to(device)
+    else:
+        pipe.to(device)
+    try: pipe.enable_xformers_memory_efficient_attention()
+    except: pass
+
+    # 验证motion layers是否正确注入
+    has_motion = hasattr(pipe.unet, 'motion_modules') or hasattr(pipe.unet, 'mid_block')
+    log(f"Motion modules: {'✅ 已注入' if has_motion else '❌ 未检测到'}")
+
+    motion_hints = {
+        "static": "subtle motion, minimal movement", "pan_left": "camera panning left",
+        "pan_right": "camera panning right", "dolly_in": "camera zooming in slowly", "dolly_out": "camera zooming out slowly"
     }
 
     log(f"生成 {total} 个视频...")
@@ -774,35 +857,45 @@ def step4_generate_videos(storyboard):
             sid = shot["shot_id"]
             ep = storyboard.get("episode", 1)
             out = f"{dirs['videos']}/ep{ep:02d}_{scene['scene_id']}_{sid}.mp4"
-            if os.path.exists(out): continue
+            if os.path.exists(out) and os.path.getsize(out) > 100000:
+                log(f"  [{count}/{total}] {sid} 跳过(已存在)")
+                continue
 
             dur = shot.get("duration_seconds", 3)
             nf = min(int(dur * VIDEO_FPS), 32)
             cm = shot.get("camera_movement", "static")
-            img_path = f"{dirs['images']}/ep{ep:02d}_{scene['scene_id']}_{sid}.png"
+            enhanced = f"{shot['prompt']}, {motion_hints.get(cm, 'subtle motion')}, smooth animation"
+            gen = None
+            if shot.get("seed", -1) > 0: gen = torch.Generator(device).manual_seed(shot["seed"])
 
-            if not os.path.exists(img_path):
-                log(f"  [{count}/{total}] {sid} 缺少图片，生成占位视频")
+            try:
+                result = pipe(prompt=enhanced, negative_prompt=shot.get("negative_prompt", ""),
+                             width=VIDEO_RESOLUTION, height=VIDEO_RESOLUTION,
+                             num_frames=nf, num_inference_steps=15, guidance_scale=7.5, generator=gen)
+                # 兼容不同diffusers版本
+                if hasattr(result, 'frames'):
+                    frames = result.frames[0] if isinstance(result.frames[0], list) else result.frames
+                elif hasattr(result, 'images'):
+                    frames = result.images
+                else:
+                    raise ValueError(f"未知的pipeline输出类型: {type(result)}")
+
+                fd = out + "_frames"
+                os.makedirs(fd, exist_ok=True)
+                for i, f in enumerate(frames): f.save(f"{fd}/frame_{i:04d}.png")
+                run_cmd(f'ffmpeg -y -framerate {VIDEO_FPS} -i "{fd}/frame_%04d.png" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart "{out}" 2>/dev/null')
+                shutil.rmtree(fd, ignore_errors=True)
+
+                if os.path.exists(out) and os.path.getsize(out) > 100000:
+                    log(f"  [{count}/{total}] {sid} ({nf}f, {dur}s) ✓")
+                else:
+                    log(f"  [{count}/{total}] {sid} 文件太小，可能无帧")
+                    _save_placeholder_video(shot, out, nf)
+            except Exception as e:
+                log(f"  [{count}/{total}] {sid} 失败: {e}")
                 _save_placeholder_video(shot, out, nf)
-                continue
 
-            w = max((shot.get("width", VIDEO_RESOLUTION) // 8) * 8, 512)
-            h = max((shot.get("height", VIDEO_RESOLUTION) // 8) * 8, 512)
-            zp_tpl = ZOOMPAN.get(cm, ZOOMPAN["static"])
-            vf_expr = zp_tpl.format(nf=nf, w=w, h=h, fps=VIDEO_FPS)
-
-            cmd = (
-                f'ffmpeg -y -loop 1 -i "{img_path}" -t {dur} '
-                f'-vf "{vf_expr}" '
-                f'-c:v libx264 -pix_fmt yuv420p -crf 20 '
-                f'-movflags +faststart "{out}" 2>/dev/null'
-            )
-            run_cmd(cmd, timeout=60)
-            if os.path.exists(out) and os.path.getsize(out) > 1000:
-                log(f"  [{count}/{total}] {sid} ({dur}s, {cm}) ✓")
-            else:
-                log(f"  [{count}/{total}] {sid} 失败，用占位视频")
-                _save_placeholder_video(shot, out, nf)
+            if has_gpu and count % 3 == 0: torch.cuda.empty_cache()
 
     log("视频生成完成")
 
@@ -1025,6 +1118,15 @@ def main():
     log("╚══════════════════════════════════════════╝")
     log(f"集数: {EPISODE_NUM} | 题材: {GENRE} | 质量: {QUALITY_MODE}")
     log(f"步数: {IMAGE_STEPS} | 分辨率: {VIDEO_RESOLUTION} | FPS: {VIDEO_FPS}")
+
+    # 清除旧输出（--force 或 KAGGLE_FORCE=1）
+    force = os.environ.get("KAGGLE_FORCE", "") == "1" or "--force" in sys.argv
+    if force:
+        log("⚠️ 强制重新生成模式：清除旧输出")
+        ep_dir = get_dirs()["episode"]
+        if os.path.exists(ep_dir):
+            shutil.rmtree(ep_dir)
+            log(f"  已清除: {ep_dir}")
 
     t0 = time.time()
     setup_dirs()
