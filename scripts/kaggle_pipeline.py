@@ -101,6 +101,17 @@ os.environ["HF_HOME"] = MODEL_CACHE_DIR
 os.environ["HUGGINGFACE_HUB_CACHE"] = MODEL_CACHE_DIR
 os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
 
+# 代理支持（解决Gemini 403 / HF下载慢）
+PROXY_URL = get_kaggle_secret("PROXY_URL")
+if PROXY_URL:
+    os.environ["HTTP_PROXY"] = PROXY_URL
+    os.environ["HTTPS_PROXY"] = PROXY_URL
+    os.environ["http_proxy"] = PROXY_URL
+    os.environ["https_proxy"] = PROXY_URL
+    print(f"[OK] 代理: {PROXY_URL}")
+else:
+    print("[INFO] 未设置代理 (Kaggle Secrets 名称: PROXY_URL)")
+
 def get_dirs(episode_num=EPISODE_NUM):
     ep_dir = f"{BASE_DIR}/episode_{episode_num:02d}"
     return {
@@ -253,9 +264,10 @@ def _parse_script_response(text):
 
 
 def _generate_with_gemini(prompt):
-    """用Gemini API生成"""
+    """用Gemini API生成（支持代理）"""
     from google import genai
     client = genai.Client(api_key=GOOGLE_API_KEY)
+    # 代理通过环境变量 HTTPS_PROXY 自动生效（httpx库会读取）
     response = client.models.generate_content(
         model="gemini-2.0-flash",
         contents=[prompt],
@@ -271,12 +283,18 @@ def _generate_with_local_llm(prompt):
     from transformers import AutoTokenizer, AutoModelForCausalLM
     import torch as _torch
 
-    model_name = "Qwen/Qwen2.5-3B-Instruct"
-    log(f"加载本地模型: {model_name}")
+    # 优先从Dataset加载，否则从HF下载
+    dataset_path = f"{MODEL_CACHE_DIR}/Qwen--Qwen2.5-3B-Instruct"
+    if os.path.exists(dataset_path) and os.path.isfile(f"{dataset_path}/config.json"):
+        model_path = dataset_path
+        log(f"从Dataset加载: {model_path}")
+    else:
+        model_path = "Qwen/Qwen2.5-3B-Instruct"
+        log(f"从HF下载: {model_path}")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
-        model_name, torch_dtype=_torch.float16, device_map="auto", trust_remote_code=True
+        model_path, torch_dtype=_torch.float16, device_map="auto", trust_remote_code=True
     )
     model.eval()
 

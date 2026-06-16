@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Kaggle 模型下载脚本 v3
+Kaggle 模型下载脚本 v4
 ====================
-- 检测已下载的文件，跳过完成的模型
-- 支持断点续传（resume_download）
-- 实时显示下载速度和进度
-- 下载完验证文件大小
+- 精简模型列表（只下载必要的）
+- 支持代理（解决Gemini 403问题）
+- 断点续传 + 进度检测
 """
 
 import os
 import sys
 import time
-import subprocess
 import json
+import subprocess
 
 MODEL_CACHE_DIR = "/kaggle/working/output/models"
 PROGRESS_FILE = f"{MODEL_CACHE_DIR}/.download_progress.json"
@@ -26,6 +25,10 @@ def get_kaggle_secret(key_name):
     try:
         if key_name == "HF_TOKEN":
             return hf_token  # noqa: F821
+        if key_name == "GOOGLE_API_KEY":
+            return secret_value_0  # noqa: F821
+        if key_name == "PROXY_URL":
+            return secret_value_2  # noqa: F821
     except:
         pass
     return ""
@@ -36,7 +39,18 @@ if HF_TOKEN:
     os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
     print("[OK] HF_TOKEN 已设置")
 else:
-    print("[WARN] HF_TOKEN 未设置，限速下载")
+    print("[WARN] HF_TOKEN 未设置")
+
+# 代理
+PROXY_URL = get_kaggle_secret("PROXY_URL")
+if PROXY_URL:
+    os.environ["HTTP_PROXY"] = PROXY_URL
+    os.environ["HTTPS_PROXY"] = PROXY_URL
+    os.environ["http_proxy"] = PROXY_URL
+    os.environ["https_proxy"] = PROXY_URL
+    print(f"[OK] 代理: {PROXY_URL}")
+else:
+    print("[INFO] 未设置代理")
 
 os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 
@@ -57,7 +71,6 @@ def check_disk_space():
         return None
 
 def get_dir_size(path):
-    """获取目录总大小（GB）"""
     total = 0
     if not os.path.exists(path):
         return 0
@@ -69,7 +82,6 @@ def get_dir_size(path):
     return total / 1e9
 
 def get_expected_size(model_id):
-    """模型期望大小（GB）"""
     sizes = {
         "runwayml/stable-diffusion-v1-5": 2.43,
         "stabilityai/sd-vae-ft-mse": 0.33,
@@ -78,66 +90,31 @@ def get_expected_size(model_id):
     }
     return sizes.get(model_id, 0)
 
-def load_progress():
-    """加载下载进度"""
-    if os.path.exists(PROGRESS_FILE):
-        try:
-            with open(PROGRESS_FILE, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    return {}
-
-def save_progress(progress):
-    with open(PROGRESS_FILE, "w") as f:
-        json.dump(progress, f, indent=2)
-
 def is_model_complete(model_id, dir_name):
-    """检查模型是否已完整下载"""
     target = f"{MODEL_CACHE_DIR}/{dir_name}"
     if not os.path.exists(target):
         return False
-    
     current_size = get_dir_size(target)
     expected = get_expected_size(model_id)
-    
-    # 已下载超过期望大小的90%算完成
     if expected > 0 and current_size >= expected * 0.9:
         return True
-    
-    # 检查是否有.safetensors或.bin文件（模型核心文件）
     has_model_files = False
     for f in os.listdir(target):
         if f.endswith(('.safetensors', '.bin', '.gguf', '.pt')) and os.path.isfile(f"{target}/{f}"):
-            fsize = os.path.getsize(f"{target}/{f}")
-            if fsize > 10 * 1024 * 1024:  # >10MB
+            if os.path.getsize(f"{target}/{f}") > 10 * 1024 * 1024:
                 has_model_files = True
                 break
-    
     return has_model_files and current_size > 0.5
 
 def download_model(model_id, dir_name=None):
-    """下载模型，支持断点续传"""
     if dir_name is None:
         dir_name = model_id.replace("/", "--")
     target = f"{MODEL_CACHE_DIR}/{dir_name}"
 
-    # 检查是否已完成
     if is_model_complete(model_id, dir_name):
         size = get_dir_size(target)
         log(f"[SKIP] {dir_name} ({size:.2f}GB 已下载)")
         return True
-
-    # 检查已有进度
-    progress = load_progress()
-    prev_time = progress.get(dir_name, {}).get("time", "")
-    prev_size = progress.get(dir_name, {}).get("size_gb", 0)
-    if prev_size > 0:
-        current_size = get_dir_size(target)
-        if current_size > prev_size * 0.95:
-            log(f"[RESUME] {dir_name} (之前已下载{prev_size:.2f}GB，当前{current_size:.2f}GB)")
-        else:
-            log(f"[RETRY] {dir_name} (之前下载不完整：{prev_size:.2f}GB)")
 
     log(f"[DOWNLOAD] {model_id}")
     os.makedirs(target, exist_ok=True)
@@ -148,59 +125,43 @@ def download_model(model_id, dir_name=None):
         snapshot_download(
             repo_id=model_id,
             local_dir=target,
-            resume_download=True,  # 关键：启用断点续传
+            resume_download=True,
         )
         elapsed = time.time() - t0
         size = get_dir_size(target)
-        speed = size / elapsed * 1e9 / 1e6 if elapsed > 0 else 0  # MB/s
-        
-        # 保存进度
-        progress[dir_name] = {"size_gb": round(size, 2), "time": time.strftime("%Y-%m-%d %H:%M")}
-        save_progress(progress)
-        
+        speed = size / elapsed * 1e9 / 1e6 if elapsed > 0 else 0
         log(f"[OK] {dir_name} ({size:.2f}GB, {elapsed:.0f}秒, {speed:.0f}MB/s)")
         return True
     except Exception as e:
         log(f"[FAIL] {model_id}: {e}")
-        # 保存当前进度
-        current_size = get_dir_size(target)
-        if current_size > 0:
-            progress[dir_name] = {"size_gb": round(current_size, 2), "time": time.strftime("%Y-%m-%d %H:%M")}
-            save_progress(progress)
-            log(f"[SAVE] 已保存进度 {current_size:.2f}GB，下次运行会续传")
-        
-        # fallback: git clone
         try:
-            log(f"[RETRY] 尝试 git clone {model_id}")
-            # 清理不完整的目录
             import shutil
             if os.path.exists(target):
                 shutil.rmtree(target)
             os.makedirs(target, exist_ok=True)
-            
+            log(f"[RETRY] git clone {model_id}")
             repo_url = f"https://huggingface.co/{model_id}"
             if HF_TOKEN:
                 repo_url = repo_url.replace("https://", f"https://{HF_TOKEN}@")
             r = run_cmd(f"git clone --depth 1 {repo_url} {target}", timeout=600)
             if r.returncode == 0:
                 size = get_dir_size(target)
-                progress[dir_name] = {"size_gb": round(size, 2), "time": time.strftime("%Y-%m-%d %H:%M")}
-                save_progress(progress)
                 log(f"[OK] {dir_name} via git ({size:.2f}GB)")
                 return True
         except Exception as e2:
-            log(f"[FAIL] git clone: {e2}")
+            log(f"[FAIL] git: {e2}")
         return False
 
 
 # ============================================================
-# 模型列表
+# 模型列表（精简版）
 # ============================================================
 
 MODELS = [
+    # 画面+视频生成（必须）
     {"id": "runwayml/stable-diffusion-v1-5", "name": "SD 1.5", "desc": "~2.43GB"},
-    {"id": "stabilityai/sd-vae-ft-mse", "name": "VAE", "desc": "~334MB"},
     {"id": "guoyww/animatediff-motion-adapter-v1-5-2", "name": "AnimateDiff", "desc": "~301MB"},
+    # 本地LLM（Gemini被封时备用）
     {"id": "Qwen/Qwen2.5-3B-Instruct", "name": "Qwen2.5-3B", "desc": "~6.44GB"},
 ]
 
@@ -211,7 +172,7 @@ MODELS = [
 
 def main():
     log("=" * 55)
-    log("  Kaggle AI短剧 - 模型下载 v3")
+    log("  Kaggle AI短剧 - 模型下载 v4")
     log("=" * 55)
 
     check_disk_space()
@@ -220,7 +181,6 @@ def main():
     log(f"模型: {len(MODELS)} 个")
     log("=" * 55)
 
-    # 安装 huggingface_hub
     log("安装 huggingface_hub...")
     run_cmd("pip install -q -U huggingface_hub", timeout=120)
 
@@ -231,7 +191,7 @@ def main():
             ok_count += 1
         check_disk_space()
 
-    # 最终检查
+    # 结果
     log("\n" + "=" * 55)
     log("下载结果：")
     total_size = 0
@@ -243,11 +203,11 @@ def main():
         expected = get_expected_size(model["id"])
         pct = (size / expected * 100) if expected > 0 else 0
         status = "✅" if size >= expected * 0.9 else ("⚠️" if size > 0.1 else "❌")
-        log(f"  {status} {model['name']}: {size:.2f}GB / {expected:.2f}GB ({pct:.0f}%) → {path}")
+        log(f"  {status} {model['name']}: {size:.2f}GB / {expected:.2f}GB ({pct:.0f}%)")
 
     log(f"\n总计: {total_size:.2f}GB ({ok_count}/{len(MODELS)} 完成)")
 
-    # Output目录结构
+    # Output结构
     log(f"\nOutput目录结构：")
     if os.path.exists("/kaggle/working/output"):
         for item in sorted(os.listdir("/kaggle/working/output")):
@@ -262,8 +222,7 @@ def main():
             else:
                 log(f"  📄 {item}")
 
-    log(f"\n✅ 完成！")
-    log(f"   Save as Dataset → 名称: kaggle-ai-series-models")
+    log(f"\n✅ 完成！Save as Dataset → kaggle-ai-series-models")
     log("=" * 55)
 
 
