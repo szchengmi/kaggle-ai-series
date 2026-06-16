@@ -114,13 +114,15 @@ def filter_core_files(all_files, model_id=None):
         if any(x in f for x in ['.git', 'tests/', 'test_', '.github', 'LICENSE', 'README.md',
                                   '.gitattributes', '.gitignore', 'Makefile']):
             continue
-        # SD 1.5特殊处理：只保留ema-only版本（4GB），不要完整未剪枝版（7.7GB）
+        # SD 1.5特殊处理：只保留ema-only版本，不要完整未剪枝版
         if model_id == "runwayml/stable-diffusion-v1-5":
+            # 只保留这一个核心文件（4GB，包含UNet+text_encoder+VAE）
             if f == "v1-5-pruned-emaonly.safetensors":
                 keep.append(f)
                 continue
-            if f == "v1-5-pruned.safetensors":
-                continue  # 跳过7.7GB的完整未剪枝版
+            # 跳过所有其他.ckpt和.safetensors（v1-5-pruned.safetensors是7.7GB未剪枝版）
+            if f.endswith('.ckpt') or f.endswith('.safetensors'):
+                continue
         # 保留模型核心文件
         if any(f.endswith(p) for p in ['.safetensors', '.bin', '.gguf', '.pt', '.pth',
                                        'config.json', 'tokenizer.json', 'tokenizer_config.json',
