@@ -18,6 +18,7 @@ import json
 import time
 import shutil
 import subprocess
+import glob
 import torch
 
 # ============================================================
@@ -93,18 +94,18 @@ if HF_TOKEN:
 # ============================================================
 
 BASE_DIR = "/kaggle/working/ai-series"
-# 模型缓存目录 — 优先Dataset挂载路径，其次working目录
-if os.path.isdir("/kaggle/input/newdataset/kaggle-ai-series/models"):
-    MODEL_CACHE_DIR = "/kaggle/input/newdataset/kaggle-ai-series/models"
-elif os.path.isdir("/kaggle/working/kaggle-ai-series/models"):
-    MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
-else:
-    MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
+# 模型缓存目录 — 自动搜索kaggle/input下所有Dataset里的models目录
+MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"  # fallback
+for _d in sorted(glob.glob("/kaggle/input/*/kaggle-ai-series/models")):
+    if os.path.isdir(_d):
+        MODEL_CACHE_DIR = _d
+        break
 
 # HuggingFace模型缓存
 os.environ["HF_HOME"] = MODEL_CACHE_DIR
 os.environ["HUGGINGFACE_HUB_CACHE"] = MODEL_CACHE_DIR
 os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
+log(f"[OK] MODEL_CACHE_DIR: {MODEL_CACHE_DIR}")
 
 # 代理支持（解决Gemini 403 / HF下载慢）
 PROXY_URL = get_kaggle_secret("PROXY_URL")
