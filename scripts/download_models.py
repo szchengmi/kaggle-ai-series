@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Kaggle 模型下载脚本 v10
+Kaggle 模型下载脚本 v11
 ====================
-用huggingface_hub Python API + 代理下载
-Kaggle DNS不通hf.co，必须走代理
+用huggingface_hub Python API直接下载（不走代理，Kaggle能直连hf.co）
+逐个下载，实时容量监控，断点续传
 """
 
 import os
 import sys
 import time
 import shutil
-import subprocess
 
 MODEL_CACHE_DIR = "/kaggle/working/output/models"
 
@@ -23,28 +22,17 @@ def get_kaggle_secret(key_name):
     try:
         if key_name == "HF_TOKEN":
             return hf_token  # noqa: F821
-        if key_name == "PROXY_URL":
-            return secret_value_0  # noqa: F821
     except:
         pass
     return ""
 
 HF_TOKEN = get_kaggle_secret("HF_TOKEN")
-PROXY_URL = get_kaggle_secret("PROXY_URL")
-
 if HF_TOKEN:
     os.environ["HF_HUB_TOKEN"] = HF_TOKEN
     os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
     print("[OK] HF_TOKEN")
-
-if PROXY_URL:
-    os.environ["HTTP_PROXY"] = PROXY_URL
-    os.environ["HTTPS_PROXY"] = PROXY_URL
-    os.environ["http_proxy"] = PROXY_URL
-    os.environ["https_proxy"] = PROXY_URL
-    print(f"[OK] 代理: {PROXY_URL}")
 else:
-    print("[WARN] 未设置代理 (Kaggle Secrets: PROXY_URL)")
+    print("[WARN] HF_TOKEN 未设置")
 
 os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 
@@ -53,8 +41,8 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 def get_disk_free_gb():
-    import shutil
-    _, _, free = shutil.disk_usage("/kaggle/working")
+    import shutil as _s
+    _, _, free = _s.disk_usage("/kaggle/working")
     return free / 1e9
 
 def get_dir_size_gb(path):
@@ -89,7 +77,7 @@ def is_model_ready(dir_name, min_size_mb=100):
     return False
 
 def download_model(model_id, dir_name, allow_patterns=None):
-    """用huggingface_hub snapshot_download + 代理下载"""
+    """用huggingface_hub snapshot_download直接下载"""
     target = f"{MODEL_CACHE_DIR}/{dir_name}"
 
     if is_model_ready(dir_name):
@@ -133,24 +121,21 @@ MODELS = [
         "id": "runwayml/stable-diffusion-v1-5",
         "name": "SD 1.5",
         "dir": "stable-diffusion-v1-5",
-        "desc": "~2.43GB",
-        # 完整pipeline都需要
-        "patterns": None,  # None = 下载全部
+        "desc": "~2.43GB (完整pipeline)",
+        "patterns": None,
     },
     {
         "id": "guoyww/animatediff-motion-adapter-v1-5-2",
         "name": "AnimateDiff",
         "dir": "animatediff",
-        "desc": "~301MB",
-        # 只下核心权重+config
+        "desc": "~301MB (核心权重)",
         "patterns": ["diffusion_pytorch_model.safetensors", "config.json"],
     },
     {
         "id": "Qwen/Qwen2.5-3B-Instruct",
         "name": "Qwen2.5-3B",
         "dir": "Qwen2.5-3B-Instruct",
-        "desc": "~6.44GB",
-        # 完整模型
+        "desc": "~6.44GB (完整模型)",
         "patterns": None,
     },
 ]
@@ -162,20 +147,18 @@ MODELS = [
 
 def main():
     log("=" * 55)
-    log("  Kaggle AI短剧 - 模型下载 v10 (Python API + 代理)")
+    log("  Kaggle AI短剧 - 模型下载 v11")
     log("=" * 55)
     log(f"目标: {MODEL_CACHE_DIR}")
     check_capacity("初始 ")
 
-    # 安装huggingface_hub
-    log("安装 huggingface_hub...")
+    import subprocess
     subprocess.run("pip install -q -U huggingface_hub", shell=True, timeout=120)
 
     for i, model in enumerate(MODELS, 1):
         log(f"\n{'='*55}")
         log(f"[{i}/{len(MODELS)}] {model['name']} ({model['desc']})")
-
-        ok = download_model(model["id"], model["dir"], model["patterns"])
+        download_model(model["id"], model["dir"], model["patterns"])
         check_capacity(f"#{i} ")
 
     # 最终结果
