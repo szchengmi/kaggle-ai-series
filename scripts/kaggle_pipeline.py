@@ -105,7 +105,10 @@ for _d in sorted(glob.glob("/kaggle/input/*/kaggle-ai-series/models")):
 os.environ["HF_HOME"] = MODEL_CACHE_DIR
 os.environ["HUGGINGFACE_HUB_CACHE"] = MODEL_CACHE_DIR
 os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
-log(f"[OK] MODEL_CACHE_DIR: {MODEL_CACHE_DIR}")
+# 强制离线模式 — 只用本地Dataset中的模型，不联网
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+log(f"[OK] MODEL_CACHE_DIR: {MODEL_CACHE_DIR} (OFFLINE mode)")
 
 # 代理支持（解决Gemini 403 / HF下载慢）
 PROXY_URL = get_kaggle_secret("PROXY_URL")
@@ -298,9 +301,9 @@ def _generate_with_local_llm(prompt):
         model_path = "Qwen/Qwen2.5-3B-Instruct"
         log(f"从HF下载: {model_path}")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=_torch.float16, device_map="auto", trust_remote_code=True
+        model_path, torch_dtype=_torch.float16, device_map="auto", trust_remote_code=True, local_files_only=True
     )
     model.eval()
 
@@ -568,7 +571,7 @@ def step3_generate_images(storyboard):
         mp = "runwayml/stable-diffusion-v1-5"
 
     log(f"加载SD: {mp}")
-    pipe = StableDiffusionPipeline.from_pretrained(mp, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False)
+    pipe = StableDiffusionPipeline.from_pretrained(mp, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False, local_files_only=True)
 
     try:
         from diffusers import AutoencoderKL
@@ -669,8 +672,8 @@ def step4_generate_videos(storyboard):
     if not os.path.exists(motp) or not os.listdir(motp): motp = "guoyww/animatediff-motion-adapter-v1-5-2"
 
     log("加载AnimateDiff...")
-    adapter = MotionAdapter.from_pretrained(motp, torch_dtype=torch.float16)
-    pipe = StableDiffusionPipeline.from_pretrained(mp, motion_adapter=adapter, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False)
+    adapter = MotionAdapter.from_pretrained(motp, torch_dtype=torch.float16, local_files_only=True)
+    pipe = StableDiffusionPipeline.from_pretrained(mp, motion_adapter=adapter, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False, local_files_only=True)
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config, beta_schedule="linear", steps_offset=1)
     pipe.enable_attention_slicing().enable_vae_slicing().to("cuda")
     try: pipe.enable_xformers_memory_efficient_attention()
