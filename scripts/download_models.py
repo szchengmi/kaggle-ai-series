@@ -141,7 +141,7 @@ def download_model(model_id, dir_name=None):
         include_pattern = '"*.safetensors" "*.bin" "config.json" "tokenizer.json" "tokenizer_config.json"'
 
     cred = f' --token {HF_TOKEN}' if HF_TOKEN else ''
-    cmd = f'huggingface-cli download {model_id} --include {include_pattern} --local-dir {tmp_dir}{cred}'
+    cmd = f'hf download {model_id} --include {include_pattern} --local-dir {tmp_dir}{cred}'
 
     log(f"  下载中...")
     r = run_cmd(cmd, timeout=900)
