@@ -183,6 +183,8 @@ def download_model(model_id, dir_name):
     # 过滤核心文件
     core_files = filter_core_files(all_files, model_id)
     log(f"  文件: {len(all_files)}个 → 下载{len(core_files)}个核心文件")
+    for cf in core_files:
+        log(f"    → {cf}")
 
     # 逐个文件下载
     ok = 0
