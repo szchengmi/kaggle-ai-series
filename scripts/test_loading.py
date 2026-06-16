@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""验证Dataset模型加载 (CPU模式)"""
+"""验证Dataset模型加载 — 允许diffusers下载config"""
 import torch
 print(f"PyTorch: {torch.__version__} | CUDA: {torch.cuda.is_available()}")
 
 import os
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
+# 不完全离线 — 允许diffusers下载配置文件，但不下载模型权重
+os.environ["HF_HUB_OFFLINE"] = "0"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -20,25 +20,9 @@ for _root, _dirs, _files in os.walk("/kaggle/input"):
 
 print(f"模型路径: {MODEL_CACHE_DIR}")
 
-# 检测模型文件
-for name in ["SD 1.5", "AnimateDiff", "Qwen2.5-3B"]:
-    paths = {
-        "SD 1.5": f"{MODEL_CACHE_DIR}/stable-diffusion-v1-5",
-        "AnimateDiff": f"{MODEL_CACHE_DIR}/animatediff",
-        "Qwen2.5-3B": f"{MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct",
-    }
-    p = paths[name]
-    if os.path.isdir(p):
-        files = os.listdir(p)
-        size = sum(os.path.getsize(f"{p}/{f}") for f in files if os.path.isfile(f"{p}/{f}")) / 1e6
-        print(f"  ✅ {name}: {size:.0f}MB, {len(files)}个文件")
-    else:
-        print(f"  ❌ {name}: 不存在")
-
 # 测试 SD 1.5 (from_single_file)
 print("\n[1/3] 加载 SD 1.5 (from_single_file)...")
-sd_path = f"{MODEL_CACHE_DIR}/stable-diffusion-v1-5"
-sd_file = f"{sd_path}/v1-5-pruned-emaonly.safetensors"
+sd_file = f"{MODEL_CACHE_DIR}/stable-diffusion-v1-5/v1-5-pruned-emaonly.safetensors"
 try:
     from diffusers import StableDiffusionPipeline
     pipe = StableDiffusionPipeline.from_single_file(
@@ -67,7 +51,11 @@ print("\n[3/3] 加载 Qwen2.5-3B tokenizer...")
 qwen_path = f"{MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct"
 try:
     from transformers import AutoTokenizer
+    # tokenizer用离线
+    old = os.environ.get("TRANSFORMERS_OFFLINE", "")
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
     tok = AutoTokenizer.from_pretrained(qwen_path, trust_remote_code=True, local_files_only=True)
+    os.environ["TRANSFORMERS_OFFLINE"] = old
     print(f"  ✅ Qwen tokenizer 成功!")
 except Exception as e:
     print(f"  ❌ {e}")
