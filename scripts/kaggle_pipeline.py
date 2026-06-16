@@ -18,7 +18,6 @@ import json
 import time
 import shutil
 import subprocess
-import glob
 import torch
 
 # ============================================================
@@ -362,7 +361,7 @@ def _generate_with_local_llm(prompt):
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
-        model_path, torch_dtype=_torch.float16, device_map="auto",
+        model_path, torch_dtype=DTYPE, device_map="auto",
         trust_remote_code=True, local_files_only=True
     )
     model.eval()
@@ -616,13 +615,9 @@ def step3_generate_images(storyboard):
     log("=" * 50)
 
     has_gpu = torch.cuda.is_available()
+    device = "cuda" if has_gpu else "cpu"
     dirs = get_dirs()
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
-
-    if not has_gpu:
-        log("[WARN] 无GPU，占位图")
-        _placeholder_images(storyboard)
-        return
 
     from diffusers import StableDiffusionPipeline, EulerAncestralDiscreteScheduler
 
@@ -630,9 +625,9 @@ def step3_generate_images(storyboard):
     if not os.path.exists(mp) or not os.listdir(mp):
         mp = "runwayml/stable-diffusion-v1-5"
 
-    log(f"加载SD: {mp}")
+    log(f"加载SD: {mp} ({device})")
     pipe = StableDiffusionPipeline.from_pretrained(
-        mp, torch_dtype=torch.float16,
+        mp, torch_dtype=DTYPE,
         safety_checker=None, requires_safety_checker=False,
         local_files_only=True, cache_dir=mp
     )
@@ -641,12 +636,15 @@ def step3_generate_images(storyboard):
         from diffusers import AutoencoderKL
         vp = f"{dirs['models']}/vae-ft-mse"
         if not os.path.exists(vp): vp = "stabilityai/sd-vae-ft-mse"
-        pipe.vae = AutoencoderKL.from_pretrained(vp, torch_dtype=torch.float16)
+        pipe.vae = AutoencoderKL.from_pretrained(vp, torch_dtype=DTYPE)
     except Exception as e:
         log(f"VAE: {e}")
 
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
-    pipe.enable_attention_slicing().enable_vae_slicing().to("cuda")
+    if has_gpu:
+        pipe.enable_attention_slicing().enable_vae_slicing().to(device)
+    else:
+        pipe.to(device)
     try:
         pipe.enable_xformers_memory_efficient_attention()
         log("xformers ✓")
@@ -667,7 +665,7 @@ def step3_generate_images(storyboard):
             h = max((shot["height"] // 8) * 8, 512)
             gen = None
             if shot.get("seed", -1) > 0:
-                gen = torch.Generator("cuda").manual_seed(shot["seed"])
+                gen = torch.Generator(device).manual_seed(shot["seed"])
 
             try:
                 result = pipe(prompt=shot["prompt"], negative_prompt=shot.get("negative_prompt", ""),
@@ -676,12 +674,11 @@ def step3_generate_images(storyboard):
                              guidance_scale=shot.get("guidance", IMAGE_GUIDANCE), generator=gen)
                 result.images[0].save(out)
                 log(f"  [{count}/{total}] {sid} ({w}x{h}) ✓")
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
+            except Exception as e:
+                log(f"  [{count}/{total}] {sid} 失败: {e}")
                 _save_placeholder_image(shot, out)
-                log(f"  [{count}/{total}] {sid} OOM ✗")
 
-            if count % 5 == 0: torch.cuda.empty_cache()
+            if has_gpu and count % 5 == 0: torch.cuda.empty_cache()
 
     log("画面生成完成")
 
@@ -720,13 +717,9 @@ def step4_generate_videos(storyboard):
     log("=" * 50)
 
     has_gpu = torch.cuda.is_available()
+    device = "cuda" if has_gpu else "cpu"
     dirs = get_dirs()
     total = sum(len(s.get("shots", [])) for s in storyboard.get("scenes", []))
-
-    if not has_gpu:
-        log("[WARN] 无GPU，占位视频")
-        _placeholder_videos(storyboard)
-        return
 
     from diffusers import StableDiffusionPipeline, MotionAdapter, EulerAncestralDiscreteScheduler
 
@@ -736,14 +729,17 @@ def step4_generate_videos(storyboard):
     if not os.path.exists(motp) or not os.listdir(motp): motp = "guoyww/animatediff-motion-adapter-v1-5-2"
 
     log("加载AnimateDiff...")
-    adapter = MotionAdapter.from_pretrained(motp, torch_dtype=torch.float16, local_files_only=True, cache_dir=motp)
+    adapter = MotionAdapter.from_pretrained(motp, torch_dtype=DTYPE, local_files_only=True, cache_dir=motp)
     pipe = StableDiffusionPipeline.from_pretrained(
-        mp, motion_adapter=adapter, torch_dtype=torch.float16,
+        mp, motion_adapter=adapter, torch_dtype=DTYPE,
         safety_checker=None, requires_safety_checker=False,
         local_files_only=True, cache_dir=mp
     )
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config, beta_schedule="linear", steps_offset=1)
-    pipe.enable_attention_slicing().enable_vae_slicing().to("cuda")
+    if has_gpu:
+        pipe.enable_attention_slicing().enable_vae_slicing().to(device)
+    else:
+        pipe.to(device)
     try: pipe.enable_xformers_memory_efficient_attention()
     except: pass
 
@@ -767,7 +763,7 @@ def step4_generate_videos(storyboard):
             cm = shot.get("camera_movement", "static")
             enhanced = f"{shot['prompt']}, {motion_hints.get(cm, 'subtle motion')}, smooth animation"
             gen = None
-            if shot.get("seed", -1) > 0: gen = torch.Generator("cuda").manual_seed(shot["seed"])
+            if shot.get("seed", -1) > 0: gen = torch.Generator(device).manual_seed(shot["seed"])
 
             try:
                 result = pipe(prompt=enhanced, negative_prompt=shot.get("negative_prompt", ""),
@@ -780,12 +776,11 @@ def step4_generate_videos(storyboard):
                 run_cmd(f'ffmpeg -y -framerate {VIDEO_FPS} -i "{fd}/frame_%04d.png" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart "{out}" 2>/dev/null')
                 shutil.rmtree(fd, ignore_errors=True)
                 log(f"  [{count}/{total}] {sid} ({nf}f) ✓")
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
+            except Exception as e:
+                log(f"  [{count}/{total}] {sid} 失败: {e}")
                 _save_placeholder_video(shot, out, nf)
-                log(f"  [{count}/{total}] {sid} OOM ✗")
 
-            if count % 3 == 0: torch.cuda.empty_cache()
+            if has_gpu and count % 3 == 0: torch.cuda.empty_cache()
 
     log("视频生成完成")
 
@@ -1020,15 +1015,18 @@ def main():
     _install_if_missing("diffusers", "diffusers transformers accelerate safetensors")
     _install_if_missing("ChatTTS", "ChatTTS soundfile edge-tts moviepy")
 
+    global DTYPE
     has_gpu = torch.cuda.is_available()
+    DTYPE = torch.float16 if has_gpu else torch.float32
     if has_gpu:
         log(f"GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_mem / 1e9:.1f}GB)")
+    else:
+        log("模式: CPU (float32)")
 
     script = step1_generate_script()
     storyboard = step2_generate_storyboard(script)
     step3_generate_images(storyboard)
-    if has_gpu: step4_generate_videos(storyboard)
-    else: _placeholder_videos(storyboard)
+    step4_generate_videos(storyboard)
     step5_generate_audio(storyboard)
     step6_compose(storyboard)
 
