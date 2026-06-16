@@ -95,10 +95,12 @@ def get_repo_file_list(model_id):
     try:
         files = []
         for f in list_repo_tree(repo_id=model_id, repo_type="model"):
-            if hasattr(f, 'size'):
+            if hasattr(f, 'path'):
                 files.append(f.path)
+            elif hasattr(f, 'rfilename'):
+                files.append(f.rfilename)
             else:
-                files.append(f)
+                files.append(str(f))
         return files
     except Exception as e:
         log(f"  ⚠️  获取文件列表失败: {e}")
