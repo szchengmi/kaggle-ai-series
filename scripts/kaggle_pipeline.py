@@ -93,10 +93,15 @@ if HF_TOKEN:
 # ============================================================
 
 BASE_DIR = "/kaggle/working/ai-series"
-# 模型缓存目录 — 指向 /kaggle/working/output 以便保存到Kaggle Dataset
-MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
+# 模型缓存目录 — 优先Dataset挂载路径，其次working目录
+if os.path.isdir("/kaggle/input/newdataset/kaggle-ai-series/models"):
+    MODEL_CACHE_DIR = "/kaggle/input/newdataset/kaggle-ai-series/models"
+elif os.path.isdir("/kaggle/working/kaggle-ai-series/models"):
+    MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
+else:
+    MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
 
-# HuggingFace模型缓存到output目录（持久化到Kaggle Dataset）
+# HuggingFace模型缓存
 os.environ["HF_HOME"] = MODEL_CACHE_DIR
 os.environ["HUGGINGFACE_HUB_CACHE"] = MODEL_CACHE_DIR
 os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
@@ -283,11 +288,11 @@ def _generate_with_local_llm(prompt):
     from transformers import AutoTokenizer, AutoModelForCausalLM
     import torch as _torch
 
-    # 优先从Dataset加载，否则从HF下载
-    dataset_path = f"{MODEL_CACHE_DIR}/Qwen--Qwen2.5-3B-Instruct"
-    if os.path.exists(dataset_path) and os.path.isfile(f"{dataset_path}/config.json"):
-        model_path = dataset_path
-        log(f"从Dataset加载: {model_path}")
+    # 优先从Dataset/本地目录加载
+    local_path = f"{MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct"
+    if os.path.isdir(local_path) and os.path.isfile(f"{local_path}/config.json"):
+        model_path = local_path
+        log(f"从本地加载: {model_path}")
     else:
         model_path = "Qwen/Qwen2.5-3B-Instruct"
         log(f"从HF下载: {model_path}")

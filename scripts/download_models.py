@@ -13,6 +13,9 @@ import shutil
 import subprocess
 
 MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
+# 如果Dataset已挂载，优先下载到Dataset路径
+if os.path.isdir("/kaggle/input/newdataset/kaggle-ai-series"):
+    MODEL_CACHE_DIR = "/kaggle/input/newdataset/kaggle-ai-series/models"
 
 def get_kaggle_secret(key_name):
     try:
