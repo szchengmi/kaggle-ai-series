@@ -1,89 +1,84 @@
 #!/usr/bin/env python3
-"""精确检测 — 模拟pipeline的路径搜索逻辑"""
+"""精确检测 — 先升级torch再测试模型加载"""
 import os
+import subprocess
 import sys
 
-# 先import torch（Kaggle环境需要先import再设置env）
+# Step 1: 升级torch（解决MKL冲突）
+print("升级 PyTorch...")
+subprocess.run(
+    [sys.executable, "-m", "pip", "install", "-q", "--upgrade",
+     "torch", "torchvision", "torchaudio",
+     "--index-url", "https://download.pytorch.org/whl/cu124"],
+    timeout=300
+)
+
 import torch
 print(f"PyTorch: {torch.__version__}")
 print(f"CUDA: {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
+# 离线模式
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+# Step 2: 搜索模型路径
 print("\n模拟 pipeline 路径搜索:")
 print("=" * 60)
 
-MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"  # fallback
+MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
 for _root, _dirs, _files in os.walk("/kaggle/input"):
     if "models" in _dirs:
         _candidate = os.path.join(_root, "models")
         has_sd = os.path.isdir(os.path.join(_candidate, "stable-diffusion-v1-5"))
         print(f"  找到: {_candidate}")
-        print(f"    stable-diffusion-v1-5: {'✅' if has_sd else '❌'}")
         if has_sd:
             MODEL_CACHE_DIR = _candidate
-            print(f"  → 选中: {MODEL_CACHE_DIR}")
+            print(f"  → 选中!")
             break
 
-print(f"\n最终 MODEL_CACHE_DIR: {MODEL_CACHE_DIR}")
+print(f"MODEL_CACHE_DIR: {MODEL_CACHE_DIR}")
 
-# 测试 from_pretrained 能否加载
-print("\n测试 from_pretrained 加载:")
+# Step 3: 测试加载
+print("\n测试 from_pretrained:")
 print("-" * 60)
 
+# SD 1.5
 sd_path = f"{MODEL_CACHE_DIR}/stable-diffusion-v1-5"
-print(f"SD路径: {sd_path}")
-print(f"  存在: {os.path.isdir(sd_path)}")
-print(f"  文件: {[f for f in os.listdir(sd_path) if os.path.isfile(f'{sd_path}/{f}')]}")
-
+print(f"\n[1/3] SD 1.5: {sd_path}")
+print(f"  文件: {os.listdir(sd_path)}")
 try:
     from diffusers import StableDiffusionPipeline
-    print("\n尝试加载 SD 1.5...")
     pipe = StableDiffusionPipeline.from_pretrained(
-        sd_path,
-        torch_dtype=torch.float16,
-        safety_checker=None,
-        requires_safety_checker=False,
-        local_files_only=True,
-        cache_dir=sd_path,
+        sd_path, torch_dtype=torch.float16,
+        safety_checker=None, requires_safety_checker=False,
+        local_files_only=True, cache_dir=sd_path,
     )
-    print("✅ SD 1.5 加载成功!")
-    del pipe
-    torch.cuda.empty_cache()
+    print("  ✅ 成功!"); del pipe; torch.cuda.empty_cache()
 except Exception as e:
-    print(f"❌ SD 1.5 加载失败: {e}")
-    import traceback; traceback.print_exc()
+    print(f"  ❌ {e}")
 
-# 测试Qwen
-qwen_path = f"{MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct"
-print(f"\nQwen路径: {qwen_path}")
-print(f"  存在: {os.path.isdir(qwen_path)}")
-if os.path.isdir(qwen_path):
-    print(f"  文件: {[f for f in os.listdir(qwen_path) if os.path.isfile(f'{qwen_path}/{f}')]}")
-
-try:
-    from transformers import AutoTokenizer
-    print("\n尝试加载 Qwen tokenizer...")
-    tok = AutoTokenizer.from_pretrained(qwen_path, trust_remote_code=True, local_files_only=True)
-    print("✅ Qwen tokenizer 加载成功!")
-except Exception as e:
-    print(f"❌ Qwen tokenizer 加载失败: {e}")
-
-# 测试AnimateDiff
+# AnimateDiff
 ad_path = f"{MODEL_CACHE_DIR}/animatediff"
-print(f"\nAnimateDiff路径: {ad_path}")
-print(f"  存在: {os.path.isdir(ad_path)}")
-if os.path.isdir(ad_path):
-    print(f"  文件: {[f for f in os.listdir(ad_path) if os.path.isfile(f'{ad_path}/{f}')]}")
-
+print(f"\n[2/3] AnimateDiff: {ad_path}")
+print(f"  文件: {os.listdir(ad_path)}")
 try:
     from diffusers import MotionAdapter
-    print("\n尝试加载 AnimateDiff...")
     adapter = MotionAdapter.from_pretrained(ad_path, torch_dtype=torch.float16, local_files_only=True, cache_dir=ad_path)
-    print("✅ AnimateDiff 加载成功!")
-    del adapter
+    print("  ✅ 成功!"); del adapter
 except Exception as e:
-    print(f"❌ AnimateDiff 加载失败: {e}")
+    print(f"  ❌ {e}")
+
+# Qwen
+qwen_path = f"{MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct"
+print(f"\n[3/3] Qwen2.5-3B: {qwen_path}")
+print(f"  文件: {[f for f in os.listdir(qwen_path)]}")
+try:
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(qwen_path, trust_remote_code=True, local_files_only=True)
+    print("  ✅ 成功!")
+except Exception as e:
+    print(f"  ❌ {e}")
 
 print("\n" + "=" * 60)
-print("诊断完成")
