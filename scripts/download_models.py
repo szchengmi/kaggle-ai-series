@@ -14,17 +14,24 @@ import shutil
 MODEL_CACHE_DIR = "/kaggle/working/output/models"
 
 def get_kaggle_secret(key_name):
+    # 方式1: kaggle_secrets库
     try:
         from kaggle_secrets import UserSecretsClient
-        return UserSecretsClient().get_secret(key_name)
+        val = UserSecretsClient().get_secret(key_name)
+        if val:
+            return val
     except:
         pass
+    # 方式2: Kaggle自动注入的变量 secret_value_0, secret_value_1, ...
     try:
         if key_name == "HF_TOKEN":
-            return hf_token  # noqa: F821
+            return secret_value_1  # noqa: F821
+        if key_name == "GOOGLE_API_KEY":
+            return secret_value_0  # noqa: F821
     except:
         pass
-    return ""
+    # 方式3: 环境变量
+    return os.environ.get(key_name, "")
 
 HF_TOKEN = get_kaggle_secret("HF_TOKEN")
 if HF_TOKEN:
