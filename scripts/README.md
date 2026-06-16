@@ -18,7 +18,7 @@
 !rm -rf kaggle-ai-series
 ```
 
-### Step 1: 克隆仓库（首次）
+### Step 1: 克隆仓库
 
 ```python
 !git clone https://github.com/szchengmi/kaggle-ai-series.git
@@ -31,16 +31,24 @@
 !python download_models.py
 ```
 
-下载完成后，Kaggle页面 → Output → **Save as Dataset**，名称填 `kaggle-ai-series-models`
+### Step 3: 创建Dataset
 
-### Step 3: 运行流水线
+运行完成后，脚本会打印Output目录结构。确认模型文件存在后：
+
+1. 打开Kaggle Notebook页面右侧 **Output** 面板
+2. 点击 **Save as Dataset**
+3. 名称填 `kaggle-ai-series-models`
+4. 在弹出的文件选择器中，勾选 `models/` 文件夹
+5. 点击 **Create**
+
+### Step 4: 运行流水线
 
 ```python
 %cd /kaggle/working/kaggle-ai-series/scripts
 !python kaggle_pipeline.py
 ```
 
-如果已挂载Dataset，模型自动复用。
+如果已挂载Dataset（Add Data → kaggle-ai-series-models），模型自动复用。
 
 ## 设置Kaggle Secrets（可选）
 
