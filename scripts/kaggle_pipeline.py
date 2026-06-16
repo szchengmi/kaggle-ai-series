@@ -625,12 +625,20 @@ def step3_generate_images(storyboard):
     if not os.path.exists(mp) or not os.listdir(mp):
         mp = "runwayml/stable-diffusion-v1-5"
 
-    log(f"加载SD: {mp} ({device})")
-    pipe = StableDiffusionPipeline.from_pretrained(
-        mp, torch_dtype=DTYPE,
-        safety_checker=None, requires_safety_checker=False,
-        local_files_only=True, cache_dir=mp
-    )
+    sd_file = f"{mp}/v1-5-pruned-emaonly.safetensors"
+    if not os.path.isfile(sd_file):
+        sd_file = "runwayml/stable-diffusion-v1-5"
+        log(f"加载SD (HF): {sd_file}")
+        pipe = StableDiffusionPipeline.from_pretrained(
+            sd_file, torch_dtype=DTYPE,
+            safety_checker=None, requires_safety_checker=False,
+        )
+    else:
+        log(f"加载SD (单文件): {sd_file}")
+        pipe = StableDiffusionPipeline.from_single_file(
+            sd_file, torch_dtype=DTYPE,
+            safety_checker=None, requires_safety_checker=False,
+        )
 
     try:
         from diffusers import AutoencoderKL
@@ -730,11 +738,17 @@ def step4_generate_videos(storyboard):
 
     log("加载AnimateDiff...")
     adapter = MotionAdapter.from_pretrained(motp, torch_dtype=DTYPE, local_files_only=True, cache_dir=motp)
-    pipe = StableDiffusionPipeline.from_pretrained(
-        mp, motion_adapter=adapter, torch_dtype=DTYPE,
-        safety_checker=None, requires_safety_checker=False,
-        local_files_only=True, cache_dir=mp
-    )
+    sd_file = f"{mp}/v1-5-pruned-emaonly.safetensors"
+    if os.path.isfile(sd_file):
+        pipe = StableDiffusionPipeline.from_single_file(
+            sd_file, motion_adapter=adapter, torch_dtype=DTYPE,
+            safety_checker=None, requires_safety_checker=False,
+        )
+    else:
+        pipe = StableDiffusionPipeline.from_pretrained(
+            mp, motion_adapter=adapter, torch_dtype=DTYPE,
+            safety_checker=None, requires_safety_checker=False,
+        )
     pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config, beta_schedule="linear", steps_offset=1)
     if has_gpu:
         pipe.enable_attention_slicing().enable_vae_slicing().to(device)

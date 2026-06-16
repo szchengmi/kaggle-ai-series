@@ -35,15 +35,15 @@ for name in ["SD 1.5", "AnimateDiff", "Qwen2.5-3B"]:
     else:
         print(f"  ❌ {name}: 不存在")
 
-# 测试 SD 1.5
-print("\n[1/3] 加载 SD 1.5...")
+# 测试 SD 1.5 (from_single_file)
+print("\n[1/3] 加载 SD 1.5 (from_single_file)...")
 sd_path = f"{MODEL_CACHE_DIR}/stable-diffusion-v1-5"
+sd_file = f"{sd_path}/v1-5-pruned-emaonly.safetensors"
 try:
     from diffusers import StableDiffusionPipeline
-    pipe = StableDiffusionPipeline.from_pretrained(
-        sd_path, torch_dtype=torch.float32,
+    pipe = StableDiffusionPipeline.from_single_file(
+        sd_file, torch_dtype=torch.float32,
         safety_checker=None, requires_safety_checker=False,
-        local_files_only=True, cache_dir=sd_path,
     )
     pipe.to(device)
     print(f"  ✅ SD 1.5 成功! ({device})")
