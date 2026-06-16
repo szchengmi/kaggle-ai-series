@@ -110,6 +110,62 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 log(f"[OK] MODEL_CACHE_DIR: {MODEL_CACHE_DIR} (OFFLINE mode)")
 
+# ============================================================
+# 检测Dataset中的模型文件
+# ============================================================
+REQUIRED_MODELS = {
+    "SD 1.5": {
+        "path": f"{MODEL_CACHE_DIR}/stable-diffusion-v1-5",
+        "files": ["v1-5-pruned-emaonly.safetensors", "model_index.json"],
+        "min_size_mb": 2000,
+    },
+    "AnimateDiff": {
+        "path": f"{MODEL_CACHE_DIR}/animatediff",
+        "files": ["diffusion_pytorch_model.safetensors", "config.json"],
+        "min_size_mb": 200,
+    },
+    "Qwen2.5-3B": {
+        "path": f"{MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct",
+        "files": ["config.json", "tokenizer.json", "model-00001-of-00002.safetensors"],
+        "min_size_mb": 3000,
+    },
+}
+
+log("=" * 50)
+log("模型检测")
+log("=" * 50)
+all_ok = True
+for name, spec in REQUIRED_MODELS.items():
+    mp = spec["path"]
+    if not os.path.isdir(mp):
+        log(f"  ❌ {name}: 目录不存在 {mp}")
+        all_ok = False
+        continue
+    missing = [f for f in spec["files"] if not os.path.isfile(f"{mp}/{f}")]
+    if missing:
+        log(f"  ❌ {name}: 缺少文件 {missing}")
+        all_ok = False
+        continue
+    size_mb = sum(os.path.getsize(f"{mp}/{f}") for f in os.listdir(mp) if os.path.isfile(f"{mp}/{f}")) / 1e6
+    if size_mb < spec["min_size_mb"]:
+        log(f"  ⚠️  {name}: {size_mb:.0f}MB (可能不完整, 期望>{spec['min_size_mb']}MB)")
+        all_ok = False
+    else:
+        log(f"  ✅ {name}: {size_mb:.0f}MB")
+
+if not all_ok:
+    log("")
+    log("⚠️  模型不完整！Dataset可能缺少模型文件。")
+    log("请确保Dataset包含以下目录:")
+    log(f"  {MODEL_CACHE_DIR}/stable-diffusion-v1-5/")
+    log(f"  {MODEL_CACHE_DIR}/animatediff/")
+    log(f"  {MODEL_CACHE_DIR}/Qwen2.5-3B-Instruct/")
+    log("")
+    log("或者运行下载脚本: python download_models.py")
+else:
+    log("全部模型就绪 ✅")
+log("=" * 50)
+
 # 代理支持（解决Gemini 403 / HF下载慢）
 PROXY_URL = get_kaggle_secret("PROXY_URL")
 if PROXY_URL:
