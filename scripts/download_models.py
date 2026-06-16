@@ -19,19 +19,35 @@ def get_kaggle_secret(key_name):
         from kaggle_secrets import UserSecretsClient
         val = UserSecretsClient().get_secret(key_name)
         if val:
+            print(f"[DEBUG] {key_name} via kaggle_secrets: {val[:10]}...")
             return val
-    except:
-        pass
-    # 方式2: Kaggle自动注入的变量 secret_value_0, secret_value_1, ...
+        else:
+            print(f"[DEBUG] {key_name} via kaggle_secrets: 返回空值")
+    except Exception as e:
+        print(f"[DEBUG] {key_name} via kaggle_secrets 失败: {e}")
+    # 方式2: Kaggle自动注入的变量
     try:
         if key_name == "HF_TOKEN":
-            return secret_value_1  # noqa: F821
+            val = secret_value_1  # noqa: F821
+            if val:
+                print(f"[DEBUG] HF_TOKEN via secret_value_1: {val[:10]}...")
+            return val
         if key_name == "GOOGLE_API_KEY":
-            return secret_value_0  # noqa: F821
-    except:
-        pass
+            val = secret_value_0  # noqa: F821
+            if val:
+                print(f"[DEBUG] GOOGLE_API_KEY via secret_value_0: {val[:10]}...")
+            return val
+    except NameError:
+        print(f"[DEBUG] secret_variable未注入")
+    except Exception as e:
+        print(f"[DEBUG] secret_variable失败: {e}")
     # 方式3: 环境变量
-    return os.environ.get(key_name, "")
+    val = os.environ.get(key_name, "")
+    if val:
+        print(f"[DEBUG] {key_name} via env: {val[:10]}...")
+    else:
+        print(f"[DEBUG] {key_name} via env: 未设置")
+    return val
 
 HF_TOKEN = get_kaggle_secret("HF_TOKEN")
 if HF_TOKEN:
