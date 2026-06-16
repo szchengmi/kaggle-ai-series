@@ -1033,7 +1033,7 @@ def main():
     has_gpu = torch.cuda.is_available()
     DTYPE = torch.float16 if has_gpu else torch.float32
     if has_gpu:
-        log(f"GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_mem / 1e9:.1f}GB)")
+        log(f"GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB)")
     else:
         log("模式: CPU (float32)")
 
