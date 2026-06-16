@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Kaggle 模型下载脚本 v7
+Kaggle 模型下载脚本 v8
 ====================
-只下载核心模型文件（.safetensors/.bin），不下载README/git历史等
-用huggingface-cli指定文件列表下载
+只下载核心模型文件（模型权重+文本编码器+VAE）
+像ComfyUI一样，每个模型只需要3个文件
 """
 
 import os
@@ -31,7 +31,6 @@ HF_TOKEN = get_kaggle_secret("HF_TOKEN")
 if HF_TOKEN:
     os.environ["HF_HUB_TOKEN"] = HF_TOKEN
     os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
-    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
     print("[OK] HF_TOKEN")
 
 os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
@@ -68,152 +67,105 @@ def check_capacity(label=""):
     log(f"📊 {label}剩余: {free:.1f}GB | models: {used:.2f}GB")
     return free
 
-def list_repo_files(model_id):
-    """列出仓库中的文件"""
-    from huggingface_hub import list_repo_files
-    try:
-        files = list_repo_files(repo_id=model_id, repo_type="model")
-        return files
-    except Exception as e:
-        log(f"  ⚠️  列出文件失败: {e}")
-        return []
-
-def filter_model_files(files):
-    """只保留核心模型文件"""
-    keep = []
-    patterns = ['.safetensors', '.bin', '.gguf', '.pt', '.pth',
-                'config.json', 'tokenizer.json', 'tokenizer_config.json',
-                'special_tokens_map.json', 'merges.txt', 'vocab.json',
-                'preprocessor_config.json', 'scheduler_config.json',
-                'model_index.json', 'pipeline_config.json']
+def download_files(model_id, target, files):
+    """用hf下载指定文件列表"""
+    from huggingface_hub import hf_hub_download
+    os.makedirs(target, exist_ok=True)
+    ok = 0
     for f in files:
-        # 跳过git文件、测试文件、大无关文件
-        if any(skip in f for skip in ['.git', 'tests/', 'test_', '.github', 'LICENSE', 'README']):
-            continue
-        if any(f.endswith(p) for p in patterns):
-            keep.append(f)
-        # 也保留vae/scheduler子目录的配置
-        if '/vae/' in f or '/scheduler/' in f or '/text_encoder/' in f:
-            if not any(skip in f for skip in ['.git', 'tests/']):
-                keep.append(f)
-    return keep
+        try:
+            dest_dir = os.path.dirname(f"{target}/{f}")
+            os.makedirs(dest_dir, exist_ok=True)
+            hf_hub_download(repo_id=model_id, filename=f, local_dir=target, local_dir_use_symlinks=False)
+            ok += 1
+            log(f"    ✅ {f}")
+        except Exception as e:
+            log(f"    ❌ {f}: {e}")
+    return ok
 
-def download_model(model_id, dir_name=None):
-    if dir_name is None:
-        dir_name = model_id.replace("/", "--")
+def download_model(model_id, dir_name, core_files):
+    """下载模型的核心文件"""
     target = f"{MODEL_CACHE_DIR}/{dir_name}"
 
     # 检查是否已完成
     if os.path.exists(target):
-        size = get_dir_size_gb(target)
-        for f in os.listdir(target):
-            if f.endswith(('.safetensors', '.bin')) and os.path.isfile(f"{target}/{f}"):
-                if os.path.getsize(f"{target}/{f}") > 50 * 1024 * 1024:
-                    log(f"  ✅ {dir_name} 已存在 ({size:.2f}GB)")
-                    return True
-
-    log(f"  ⬇️  {model_id}")
-    t0 = time.time()
-
-    # 列出并过滤文件
-    files = list_repo_files(model_id)
-    if not files:
-        log(f"  ❌ 无法获取文件列表")
-        return False
-
-    keep_files = filter_model_files(files)
-    log(f"  文件: {len(files)}个 → 只下载{len(keep_files)}个核心文件")
-
-    # 创建临时目录
-    tmp_dir = f"{target}_tmp"
-    os.makedirs(tmp_dir, exist_ok=True)
-
-    # 用huggingface-cli下载指定文件
-    for f in keep_files:
-        # 创建子目录
-        sub_dir = os.path.dirname(f"{tmp_dir}/{f}")
-        os.makedirs(sub_dir, exist_ok=True)
-
-    # 批量下载（用include参数）
-    include_pattern = " ".join([f'"{f}"' for f in keep_files[:20]])
-    if len(keep_files) > 20:
-        # 太多文件，用pattern方式
-        include_pattern = '"*.safetensors" "*.bin" "config.json" "tokenizer.json" "tokenizer_config.json"'
-
-    cred = f' --token {HF_TOKEN}' if HF_TOKEN else ''
-    cmd = f'hf download {model_id} --include {include_pattern} --local-dir {tmp_dir}{cred}'
-
-    log(f"  下载中...")
-    r = run_cmd(cmd, timeout=900)
-
-    elapsed = time.time() - t0
-
-    if r.returncode == 0 and os.path.exists(tmp_dir):
-        # 检查是否有模型文件
-        has_model = False
-        for dirpath, _, filenames in os.walk(tmp_dir):
-            for fn in filenames:
-                if fn.endswith(('.safetensors', '.bin')) and os.path.isfile(f"{dirpath}/{fn}"):
-                    if os.path.getsize(f"{dirpath}/{fn}") > 50 * 1024 * 1024:
-                        has_model = True
-                        break
-
-        if has_model:
-            # 移动到最终位置
-            if os.path.exists(target):
-                shutil.rmtree(target, ignore_errors=True)
-            shutil.move(tmp_dir, target)
+        existing = [f for f in os.listdir(target) if f.endswith(('.safetensors', '.bin')) and os.path.isfile(f"{target}/{f}")]
+        if existing:
             size = get_dir_size_gb(target)
-            log(f"  ✅ {dir_name} ({size:.2f}GB, {elapsed:.0f}秒)")
+            log(f"  ✅ {dir_name} 已存在 ({size:.2f}GB, {len(existing)}个文件)")
             return True
-        else:
-            log(f"  ❌ 下载的文件中没有模型权重")
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return False
-    else:
-        log(f"  ⚠️  huggingface-cli失败: {r.stderr[:100] if r.stderr else ''}")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        # fallback: 直接用Python API下载单个文件
-        log(f"  🔄 尝试逐文件下载...")
-        return download_files_fallback(model_id, target, keep_files, dir_name)
-
-
-def download_files_fallback(model_id, target, files, dir_name):
-    """逐文件下载fallback"""
-    from huggingface_hub import hf_hub_download
-    os.makedirs(target, exist_ok=True)
+    log(f"  ⬇️  {model_id} ({len(core_files)}个核心文件)")
     t0 = time.time()
 
-    ok_count = 0
-    for f in files:
-        try:
-            dest = f"{target}/{f}"
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            hf_hub_download(repo_id=model_id, filename=f, local_dir=target)
-            ok_count += 1
-        except Exception as e:
-            pass  # 跳过失败的文件
-
+    ok = download_files(model_id, target, core_files)
     elapsed = time.time() - t0
     size = get_dir_size_gb(target)
 
-    if ok_count > 0:
-        log(f"  ✅ {dir_name} ({size:.2f}GB, {ok_count}个文件, {elapsed:.0f}秒)")
+    if ok > 0:
+        log(f"  ✅ {dir_name} ({size:.2f}GB, {ok}/{len(core_files)}个文件, {elapsed:.0f}秒)")
         return True
     else:
-        log(f"  ❌ 逐文件下载失败")
+        log(f"  ❌ 下载失败")
         return False
 
 
 # ============================================================
-# 模型列表
+# 模型列表 — 只列核心文件
 # ============================================================
 
 MODELS = [
-    {"id": "runwayml/stable-diffusion-v1-5", "name": "SD 1.5", "size": "~2.43GB"},
-    {"id": "guoyww/animatediff-motion-adapter-v1-5-2", "name": "AnimateDiff", "size": "~301MB"},
-    {"id": "Qwen/Qwen2.5-3B-Instruct", "name": "Qwen2.5-3B", "size": "~6.44GB"},
+    {
+        "id": "runwayml/stable-diffusion-v1-5",
+        "name": "SD 1.5",
+        "dir": "stable-diffusion-v1-5",
+        "files": [
+            # 模型核心 (UNet + 内置text_encoder + 内置vae 全在一个文件里)
+            "v1-5-pruned-emaonly.safetensors",
+            # 配置文件
+            "config.json",
+        ],
+        # 如果上面那个文件不存在，用这些
+        "alt_files": [
+            "unet/diffusion_pytorch_model.safetensors",
+            "text_encoder/model.safetensors",
+            "vae/diffusion_pytorch_model.safetensors",
+            "config.json",
+        ],
+    },
+    {
+        "id": "guoyww/animatediff-motion-adapter-v1-5-2",
+        "name": "AnimateDiff",
+        "dir": "animatediff-motion-adapter-v1-5-2",
+        "files": [
+            # Motion adapter核心权重
+            "v1-5-2.ckpt",
+            # 配置文件
+            "config.json",
+        ],
+        "alt_files": [
+            "diffusion_pytorch_model.safetensors",
+            "config.json",
+        ],
+    },
+    {
+        "id": "Qwen/Qwen2.5-3B-Instruct",
+        "name": "Qwen2.5-3B",
+        "dir": "Qwen2.5-3B-Instruct",
+        "files": [
+            # 模型权重（分片）
+            "model-00001-of-00004.safetensors",
+            "model-00002-of-00004.safetensors",
+            "model-00003-of-00004.safetensors",
+            "model-00004-of-00004.safetensors",
+            # 配置文件
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "generation_config.json",
+        ],
+        "alt_files": [],
+    },
 ]
 
 
@@ -223,7 +175,7 @@ MODELS = [
 
 def main():
     log("=" * 55)
-    log("  Kaggle AI短剧 - 模型下载 v7 (只下核心文件)")
+    log("  Kaggle AI短剧 - 模型下载 v8 (核心文件)")
     log("=" * 55)
     log(f"目标: {MODEL_CACHE_DIR}")
     check_capacity("初始 ")
@@ -233,10 +185,17 @@ def main():
 
     for i, model in enumerate(MODELS, 1):
         log(f"\n{'='*55}")
-        log(f"[{i}/{len(MODELS)}] {model['name']} ({model['size']})")
+        log(f"[{i}/{len(MODELS)}] {model['name']}")
 
-        dir_name = model["id"].replace("/", "--")
-        download_model(model["id"], dir_name)
+        ok = download_model(model["id"], model["dir"], model["files"])
+
+        # 如果主文件列表失败，尝试alt
+        if not ok and model.get("alt_files"):
+            log(f"  🔄 尝试备用文件列表...")
+            target = f"{MODEL_CACHE_DIR}/{model['dir']}"
+            shutil.rmtree(target, ignore_errors=True)
+            download_model(model["id"], model["dir"], model["alt_files"])
+
         check_capacity(f"下载{i}后 ")
 
     # 最终结果
@@ -247,8 +206,8 @@ def main():
     log(f"模型总计: {total:.2f}GB | 磁盘剩余: {free:.1f}GB")
 
     for model in MODELS:
-        dir_name = model["id"].replace("/", "--")
-        size = get_dir_size_gb(f"{MODEL_CACHE_DIR}/{dir_name}")
+        path = f"{MODEL_CACHE_DIR}/{model['dir']}"
+        size = get_dir_size_gb(path)
         done = "✅" if size > 0.1 else "❌"
         log(f"  {done} {model['name']}: {size:.2f}GB")
 
