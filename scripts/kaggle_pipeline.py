@@ -107,10 +107,10 @@ for _root, _dirs, _files in os.walk("/kaggle/input"):
 os.environ["HF_HOME"] = MODEL_CACHE_DIR
 os.environ["HUGGINGFACE_HUB_CACHE"] = MODEL_CACHE_DIR
 os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
-# 强制离线模式 — 只用本地Dataset中的模型，不联网
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-log(f"[OK] MODEL_CACHE_DIR: {MODEL_CACHE_DIR} (OFFLINE mode)")
+# 模型权重从本地加载，config允许下载（HF Hub需要联网获取pipeline配置）
+os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"  # transformers离线（Qwen/tokenizer）
+log(f"[OK] MODEL_CACHE_DIR: {MODEL_CACHE_DIR}")
 
 # ============================================================
 # 检测Dataset中的模型文件
