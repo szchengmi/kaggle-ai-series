@@ -315,14 +315,21 @@ def _generate_with_local_llm(prompt):
 
 def step1_generate_script():
     log("=" * 50)
-    log("Step 1: 剧本生成")
+    log("Step 1: 剧本生成 (本地LLM)")
     log("=" * 50)
 
     prompt = _build_story_prompt()
     text = None
 
-    # 优先用Gemini API
-    if GOOGLE_API_KEY:
+    # 优先用本地LLM（无需API Key）
+    try:
+        text = _generate_with_local_llm(prompt)
+        log("本地LLM 成功")
+    except Exception as e:
+        log(f"本地LLM 失败: {e}")
+
+    # 降级：Gemini API
+    if text is None and GOOGLE_API_KEY:
         log("尝试 Gemini API...")
         try:
             text = _generate_with_gemini(prompt)
@@ -330,17 +337,10 @@ def step1_generate_script():
         except Exception as e:
             log(f"Gemini API 失败: {e}")
 
-    # 降级：本地LLM
+    # 最终降级：预置剧本
     if text is None:
-        log("降级为本地LLM (Qwen2.5-3B)...")
-        try:
-            text = _generate_with_local_llm(prompt)
-            log("本地LLM 成功")
-        except Exception as e:
-            log(f"本地LLM 失败: {e}")
-            # 最终降级：预置剧本
-            log("使用预置剧本")
-            text = _get_fallback_script()
+        log("使用预置剧本")
+        text = _get_fallback_script()
 
     script_data = _parse_script_response(text)
 
@@ -936,15 +936,10 @@ def main():
     log(f"集数: {EPISODE_NUM} | 题材: {GENRE} | 质量: {QUALITY_MODE}")
     log(f"步数: {IMAGE_STEPS} | 分辨率: {VIDEO_RESOLUTION} | FPS: {VIDEO_FPS}")
 
-    if not GOOGLE_API_KEY:
-        log("[WARN] GOOGLE_API_KEY 未设置，将使用本地Qwen模型生成剧本")
-
     t0 = time.time()
     setup_dirs()
 
-    # 依赖 — Kaggle的google-genai版本很旧，强制升级
-    log("升级 google-genai...")
-    run_cmd("pip install -q --upgrade --no-cache-dir google-genai pydantic", timeout=120)
+    # 依赖
     _install_if_missing("diffusers", "diffusers transformers accelerate safetensors")
     _install_if_missing("ChatTTS", "ChatTTS soundfile edge-tts moviepy")
 
