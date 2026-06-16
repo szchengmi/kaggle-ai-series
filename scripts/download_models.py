@@ -79,14 +79,30 @@ def download_with_hf(model_id, target, include_patterns):
     return r.returncode == 0
 
 def download_with_git(model_id, target):
-    """用git clone下载完整仓库"""
+    """用git clone下载完整仓库（支持HF Token认证）"""
     if os.path.exists(target):
         shutil.rmtree(target, ignore_errors=True)
     os.makedirs(target, exist_ok=True)
-    repo_url = f"https://huggingface.co/{model_id}"
+    
     if HF_TOKEN:
-        repo_url = repo_url.replace("https://", f"https://{HF_TOKEN}@")
-    r = run_cmd(f"git clone --depth 1 {repo_url} {target}", timeout=900)
+        # 用credential helper方式认证，避免token嵌入URL导致需要password
+        os.environ["GIT_TERMINAL_PROMPT"] = "0"
+        cred_cmd = f'credential.helper=store --file=/tmp/.git-credentials'
+        repo_url = f"https://huggingface.co/{model_id}"
+        
+        # 先写入credentials文件
+        with open("/tmp/.git-credentials", "w") as cf:
+            cf.write(f"https://{HF_TOKEN}@huggingface.co\n")
+        
+        env = os.environ.copy()
+        r = subprocess.run(
+            f"git -c {cred_cmd} clone --depth 1 {repo_url} {target}",
+            shell=True, capture_output=True, text=True, timeout=900, env=env
+        )
+    else:
+        repo_url = f"https://huggingface.co/{model_id}"
+        r = run_cmd(f"git clone --depth 1 {repo_url} {target}", timeout=900)
+    
     return r.returncode == 0
 
 def is_model_ready(model_id, dir_name, min_size_mb=100):
