@@ -801,7 +801,13 @@ def step4_generate_videos(storyboard):
                 result = pipe(prompt=enhanced, negative_prompt=shot.get("negative_prompt", ""),
                              width=VIDEO_RESOLUTION, height=VIDEO_RESOLUTION,
                              num_frames=nf, num_inference_steps=15, guidance_scale=7.5, generator=gen)
-                frames = result.frames[0] if isinstance(result.frames[0], list) else result.frames
+                # 兼容不同diffusers版本
+                if hasattr(result, 'frames'):
+                    frames = result.frames[0] if isinstance(result.frames[0], list) else result.frames
+                elif hasattr(result, 'images'):
+                    frames = result.images
+                else:
+                    raise ValueError(f"未知的pipeline输出类型: {type(result)}")
                 fd = out + "_frames"
                 os.makedirs(fd, exist_ok=True)
                 for i, f in enumerate(frames): f.save(f"{fd}/frame_{i:04d}.png")
