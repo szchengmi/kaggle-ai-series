@@ -110,6 +110,10 @@ os.environ["TRANSFORMERS_CACHE"] = MODEL_CACHE_DIR
 # 模型权重从本地加载，config允许下载（HF Hub需要联网获取pipeline配置）
 os.environ["HF_HUB_OFFLINE"] = "0"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"  # transformers离线（Qwen/tokenizer）
+def log(msg):
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
+
 log(f"[OK] MODEL_CACHE_DIR: {MODEL_CACHE_DIR}")
 
 # ============================================================
@@ -198,10 +202,6 @@ def setup_dirs(episode_num=EPISODE_NUM):
     for path in dirs.values():
         os.makedirs(path, exist_ok=True)
     return dirs
-
-def log(msg):
-    ts = time.strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
 
 def run_cmd(cmd, timeout=600):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
