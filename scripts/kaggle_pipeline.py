@@ -360,9 +360,11 @@ def _generate_with_local_llm(prompt):
         log(f"从HF下载: {model_path}")
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+    # 分片模型需要用safetensors.index.json找到所有分片
     model = AutoModelForCausalLM.from_pretrained(
         model_path, torch_dtype=DTYPE, device_map="auto",
-        trust_remote_code=True, local_files_only=True
+        trust_remote_code=True, local_files_only=True,
+        use_safetensors=True,
     )
     model.eval()
 
@@ -635,9 +637,14 @@ def step3_generate_images(storyboard):
         )
     else:
         log(f"加载SD (单文件): {sd_file}")
+        # 缓存config到working目录（Dataset只读）
+        sd_cache = f"{BASE_DIR}/cache/stable-diffusion-v1-5"
+        os.makedirs(sd_cache, exist_ok=True)
+        os.environ["HF_HOME"] = sd_cache
         pipe = StableDiffusionPipeline.from_single_file(
             sd_file, torch_dtype=DTYPE,
             safety_checker=None, requires_safety_checker=False,
+            cache_dir=sd_cache,
         )
 
     try:
@@ -740,9 +747,12 @@ def step4_generate_videos(storyboard):
     adapter = MotionAdapter.from_pretrained(motp, torch_dtype=DTYPE, local_files_only=True, cache_dir=motp)
     sd_file = f"{mp}/v1-5-pruned-emaonly.safetensors"
     if os.path.isfile(sd_file):
+        sd_cache = f"{BASE_DIR}/cache/stable-diffusion-v1-5"
+        os.makedirs(sd_cache, exist_ok=True)
         pipe = StableDiffusionPipeline.from_single_file(
             sd_file, motion_adapter=adapter, torch_dtype=DTYPE,
             safety_checker=None, requires_safety_checker=False,
+            cache_dir=sd_cache,
         )
     else:
         pipe = StableDiffusionPipeline.from_pretrained(
