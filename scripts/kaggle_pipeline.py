@@ -94,7 +94,7 @@ if HF_TOKEN:
 
 BASE_DIR = "/kaggle/working/ai-series"
 # 模型缓存目录 — 指向 /kaggle/working/output 以便保存到Kaggle Dataset
-MODEL_CACHE_DIR = "/kaggle/working/output/models"
+MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
 
 # HuggingFace模型缓存到output目录（持久化到Kaggle Dataset）
 os.environ["HF_HOME"] = MODEL_CACHE_DIR

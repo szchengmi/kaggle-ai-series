@@ -12,7 +12,7 @@ import time
 import shutil
 import subprocess
 
-MODEL_CACHE_DIR = "/kaggle/working/output/models"
+MODEL_CACHE_DIR = "/kaggle/working/kaggle-ai-series/models"
 
 def get_kaggle_secret(key_name):
     try:
